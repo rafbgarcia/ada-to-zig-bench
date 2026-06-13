@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "runtime"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "runtime": { "type": "string" },
+    "active_connections": { "type": "integer" },
+    "active_requests": { "type": "integer" },
+    "total_connections": { "type": "integer" },
+    "total_requests": { "type": "integer" },
+    "total_messages": { "type": "integer" },
+    "total_errors": { "type": "integer" },
+    "rss_bytes": { "type": "integer" },
+    "heap_total_bytes": { "type": "integer" },
+    "heap_used_bytes": { "type": "integer" },
+    "external_bytes": { "type": "integer" },
+    "array_buffers_bytes": { "type": "integer" },
+    "total_heap_size_bytes": { "type": "integer" },
+    "used_heap_size_bytes": { "type": "integer" },
+    "heap_size_limit_bytes": { "type": "integer" }
+  }
+}

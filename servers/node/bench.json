@@ -1,0 +1,9 @@
+{
+  "id": "node",
+  "language": "JavaScript",
+  "runtime": "Node.js",
+  "suite": "http-json",
+  "install": "",
+  "run": "node src/server.js",
+  "ports": [8080, 8081, 8082, 8083]
+}

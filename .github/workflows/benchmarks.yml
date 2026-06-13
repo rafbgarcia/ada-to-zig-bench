@@ -1,0 +1,105 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: benchmarks-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run-missing-benchmarks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      LATITUDESH_TOKEN: ${{ secrets.LATITUDESH_TOKEN }}
+      LATITUDE_PROJECT: 'default-project'
+      LATITUDE_SSH_KEYS: ${{ vars.LATITUDE_SSH_KEYS }}
+      LATITUDE_SITE: 'ASH'
+      LATITUDE_SERVER_PLAN: 'm4-metal-small'
+      LATITUDE_LOADGEN_PLAN: 'm4-metal-small'
+      LATITUDE_OPERATING_SYSTEM: 'ubuntu_24_04_x64_lts'
+      LATITUDE_BILLING: 'hourly'
+      BENCHMARK_CONNECTIONS: '1000 10000 50000 100000'
+      PAYLOAD_BYTES: '256'
+      REQUESTS_PER_SECOND: '10000'
+      TARGET_CONNECTION_RATE: '10000'
+      BASELINE_SECONDS: '10'
+      SETTLE_SECONDS: '10'
+      TRAFFIC_SECONDS: '120'
+      COOLDOWN_SECONDS: '20'
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      LATITUDE_SSH_PRIVATE_KEY: ${{ secrets.LATITUDE_SSH_PRIVATE_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Configure SSH key for Latitude hosts
+        run: |
+          test -n "$LATITUDESH_TOKEN"
+          test -n "$LATITUDE_SSH_KEYS"
+          test -n "$LATITUDE_SSH_PRIVATE_KEY"
+          test -n "$VERCEL_TOKEN"
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$LATITUDE_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Install Latitude CLI
+        run: |
+          curl -fsSL https://cli.latitude.sh/install.sh | sh
+          echo "$HOME/.lsh" >> "$GITHUB_PATH"
+          "$HOME/.lsh/lsh" --version
+
+      - name: Install web and deployment dependencies
+        run: |
+          npm ci --prefix web
+          npm install --global vercel@54.13.0
+
+      - name: Run missing Latitude benchmarks
+        run: scripts/run-latitude-benchmarks.sh
+
+      - name: Build static web assets
+        run: npm run build --prefix web
+
+      - name: Deploy prebuilt site to Vercel
+        working-directory: web
+        run: |
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+          vercel build --prod --token "$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+
+      - name: Commit benchmark artifacts
+        run: |
+          if git diff --quiet -- servers; then
+            echo "No benchmark artifacts changed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add servers
+          git commit -m "Update benchmark artifacts [skip ci]"
+          git push origin HEAD:main

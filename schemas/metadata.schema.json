@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "server", "url", "connections", "payload_bytes", "target_requests_per_second", "target_connection_rate", "baseline_seconds", "settle_seconds", "traffic_seconds", "cooldown_seconds", "started_at"],
+  "properties": {
+    "id": { "type": "string" },
+    "server": { "type": "string" },
+    "language": { "type": ["string", "null"] },
+    "runtime": { "type": ["string", "null"] },
+    "suite": { "type": "string" },
+    "server_command": { "type": "string" },
+    "url": { "type": "string" },
+    "urls": { "type": "array", "items": { "type": "string" } },
+    "connections": { "type": "integer", "minimum": 1 },
+    "scenarios": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+    "payload_bytes": { "type": "integer", "minimum": 0 },
+    "target_requests_per_second": { "type": "integer", "minimum": 0 },
+    "target_messages_per_second": { "type": "integer", "minimum": 0 },
+    "target_connection_rate": { "type": "integer", "minimum": 1 },
+    "baseline_seconds": { "type": "integer", "minimum": 0 },
+    "settle_seconds": { "type": "integer", "minimum": 0 },
+    "traffic_seconds": { "type": "integer", "minimum": 1 },
+    "cooldown_seconds": { "type": "integer", "minimum": 0 },
+    "started_at": { "type": "string" },
+    "git_commit": { "type": "string" },
+    "benchmark_recommendations": { "type": "object" },
+    "infrastructure": { "type": "object" }
+  }
+}

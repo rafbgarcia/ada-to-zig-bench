@@ -1,0 +1,10 @@
+node_modules/
+dist/
+bin/
+.tmp/
+runs/*
+!runs/.gitkeep
+*.log
+!servers/*/benchmark/*.log
+.DS_Store
+.vercel

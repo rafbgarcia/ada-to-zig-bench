@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "runtime", "event"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "runtime": { "type": "string" },
+    "event": { "type": "string" },
+    "kind": { "type": "string" },
+    "kind_code": { "type": ["integer", "null"] },
+    "flags": { "type": ["integer", "null"] },
+    "duration_ms": { "type": "number" }
+  }
+}
+

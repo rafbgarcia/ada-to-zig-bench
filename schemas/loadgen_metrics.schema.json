@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "phase", "active_connections", "sent_per_second", "received_per_second", "errors_per_second", "p99_latency_ms"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "phase": { "type": "string" },
+    "active_connections": { "type": "integer" },
+    "sent": { "type": "integer" },
+    "received": { "type": "integer" },
+    "errors": { "type": "integer" },
+    "sent_per_second": { "type": "integer" },
+    "received_per_second": { "type": "integer" },
+    "errors_per_second": { "type": "integer" },
+    "p50_latency_ms": { "type": "number" },
+    "p90_latency_ms": { "type": "number" },
+    "p99_latency_ms": { "type": "number" },
+    "max_latency_ms": { "type": "number" }
+  }
+}
+

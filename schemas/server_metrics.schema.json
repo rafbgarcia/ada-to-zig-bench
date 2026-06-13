@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "pid", "cpu_percent", "rss_bytes", "rss_mb"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "pid": { "type": "integer" },
+    "cpu_percent": { "type": "number" },
+    "rss_bytes": { "type": "integer" },
+    "rss_mb": { "type": "number" },
+    "threads": { "type": "integer" },
+    "open_fds": { "type": "integer" },
+    "error": { "type": "string" }
+  }
+}
+
