@@ -12,6 +12,8 @@ LATITUDE_BILLING="${LATITUDE_BILLING:-hourly}"
 LATITUDE_SSH_KEYS="${LATITUDE_SSH_KEYS:-}"
 LATITUDE_KEEP_INFRA="${LATITUDE_KEEP_INFRA:-0}"
 LATITUDE_PROVISION_ATTEMPTS="${LATITUDE_PROVISION_ATTEMPTS:-2}"
+SSH_READY_TIMEOUT_SECONDS="${SSH_READY_TIMEOUT_SECONDS:-60}"
+SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
 SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
@@ -51,6 +53,8 @@ Environment:
   LATITUDE_OPERATING_SYSTEM   default: ubuntu_24_04_x64_lts
   LATITUDE_BILLING            default: hourly
   LATITUDE_PROVISION_ATTEMPTS default: 2
+  SSH_READY_TIMEOUT_SECONDS   default: 60
+  SSH_CONNECT_TIMEOUT_SECONDS default: 5
   SERVER_NAMES                optional space-separated servers; auto-detected by default
   BENCHMARK_CONNECTIONS       default: "1000 10000 50000 100000"
   PAYLOAD_BYTES               default: 256
@@ -97,7 +101,24 @@ destroy_infrastructure() {
   LOADGEN_HOSTNAME=""
   set -e
 }
+
+handle_interrupt() {
+  log "received interrupt; cleaning up Latitude infrastructure"
+  cleanup
+  trap - EXIT INT TERM
+  exit 130
+}
+
+handle_termination() {
+  log "received termination; cleaning up Latitude infrastructure"
+  cleanup
+  trap - EXIT INT TERM
+  exit 143
+}
+
 trap cleanup EXIT
+trap handle_interrupt INT
+trap handle_termination TERM
 
 main() {
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -155,6 +176,10 @@ main() {
   done
   [[ "$LATITUDE_PROVISION_ATTEMPTS" =~ ^[0-9]+$ ]] || fail "invalid Latitude provision attempt count: $LATITUDE_PROVISION_ATTEMPTS"
   (( LATITUDE_PROVISION_ATTEMPTS > 0 )) || fail "LATITUDE_PROVISION_ATTEMPTS must be greater than zero"
+  [[ "$SSH_READY_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || fail "invalid SSH readiness timeout: $SSH_READY_TIMEOUT_SECONDS"
+  (( SSH_READY_TIMEOUT_SECONDS > 0 )) || fail "SSH_READY_TIMEOUT_SECONDS must be greater than zero"
+  [[ "$SSH_CONNECT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || fail "invalid SSH connect timeout: $SSH_CONNECT_TIMEOUT_SECONDS"
+  (( SSH_CONNECT_TIMEOUT_SECONDS > 0 )) || fail "SSH_CONNECT_TIMEOUT_SECONDS must be greater than zero"
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
   log "scenarios: ${SCENARIO_CONNECTIONS[*]} connections; target request rate: ${REQUESTS_PER_SECOND}/s"
@@ -497,12 +522,30 @@ server_public_ipv4() {
 
 wait_for_ssh() {
   local ip="$1"
-  log "waiting for SSH on $ip"
-  for _ in {1..240}; do
-    if ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" true >/dev/null 2>&1; then
+  local deadline remaining connect_timeout
+
+  log "waiting up to ${SSH_READY_TIMEOUT_SECONDS}s for SSH on $ip"
+  deadline=$((SECONDS + SSH_READY_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    connect_timeout="$SSH_CONNECT_TIMEOUT_SECONDS"
+    if (( connect_timeout > remaining )); then
+      connect_timeout="$remaining"
+    fi
+
+    if ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=$connect_timeout" "$SSH_USER@$ip" true >/dev/null 2>&1; then
       return
     fi
-    sleep 5
+
+    remaining=$((deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      break
+    fi
+    if (( remaining < 5 )); then
+      sleep "$remaining"
+    else
+      sleep 5
+    fi
   done
   return 1
 }
