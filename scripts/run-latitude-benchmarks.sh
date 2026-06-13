@@ -195,6 +195,7 @@ create_latitude_server() {
   local hostname="$1"
   local plan="$2"
   local output json id parse_status
+  id=""
 
   output="$(lsh_output lsh --no-input servers create \
     --project "$LATITUDE_PROJECT" \
