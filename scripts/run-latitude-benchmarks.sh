@@ -179,38 +179,39 @@ create_infrastructure() {
   LOADGEN_HOSTNAME="bench-loadgen-$suffix"
 
   log "creating Latitude server host"
-  local server_json
-  server_json="$(lsh_json lsh --no-input servers create \
-    --project "$LATITUDE_PROJECT" \
-    --site "$LATITUDE_SITE" \
-    --plan "$LATITUDE_SERVER_PLAN" \
-    --operating_system "$LATITUDE_OPERATING_SYSTEM" \
-    --hostname "$SERVER_HOSTNAME" \
-    --billing "$LATITUDE_BILLING" \
-    --ssh_keys "$LATITUDE_SSH_KEYS" \
-    --json)"
-  SERVER_ID="$(printf '%s\n' "$server_json" | latitude_server_id)"
-  [[ -n "$SERVER_ID" && "$SERVER_ID" != "null" ]] || fail "could not parse server host ID from lsh response shape: $(printf '%s\n' "$server_json" | latitude_json_shape)"
+  SERVER_ID="$(create_latitude_server "$SERVER_HOSTNAME" "$LATITUDE_SERVER_PLAN")"
 
   log "creating Latitude loadgen host"
-  local loadgen_json
-  loadgen_json="$(lsh_json lsh --no-input servers create \
-    --project "$LATITUDE_PROJECT" \
-    --site "$LATITUDE_SITE" \
-    --plan "$LATITUDE_LOADGEN_PLAN" \
-    --operating_system "$LATITUDE_OPERATING_SYSTEM" \
-    --hostname "$LOADGEN_HOSTNAME" \
-    --billing "$LATITUDE_BILLING" \
-    --ssh_keys "$LATITUDE_SSH_KEYS" \
-    --json)"
-  LOADGEN_ID="$(printf '%s\n' "$loadgen_json" | latitude_server_id)"
-  [[ -n "$LOADGEN_ID" && "$LOADGEN_ID" != "null" ]] || fail "could not parse loadgen host ID from lsh response shape: $(printf '%s\n' "$loadgen_json" | latitude_json_shape)"
+  LOADGEN_ID="$(create_latitude_server "$LOADGEN_HOSTNAME" "$LATITUDE_LOADGEN_PLAN")"
 
   SERVER_IPV4="$(wait_for_ipv4 "$SERVER_ID")"
   LOADGEN_IPV4="$(wait_for_ipv4 "$LOADGEN_ID")"
 
   wait_for_ssh "$SERVER_IPV4"
   wait_for_ssh "$LOADGEN_IPV4"
+}
+
+create_latitude_server() {
+  local hostname="$1"
+  local plan="$2"
+  local json id
+
+  json="$(lsh_json lsh --no-input servers create \
+    --project "$LATITUDE_PROJECT" \
+    --site "$LATITUDE_SITE" \
+    --plan "$plan" \
+    --operating_system "$LATITUDE_OPERATING_SYSTEM" \
+    --hostname "$hostname" \
+    --billing "$LATITUDE_BILLING" \
+    --ssh_keys "$LATITUDE_SSH_KEYS" \
+    --json)"
+  id="$(printf '%s\n' "$json" | latitude_server_id 2>/dev/null || true)"
+  if [[ -z "$id" || "$id" == "null" ]]; then
+    id="$(wait_for_server_id_by_hostname "$hostname")"
+  fi
+
+  [[ -n "$id" && "$id" != "null" ]] || fail "could not resolve Latitude host ID for $hostname from create response shape: $(printf '%s\n' "$json" | latitude_json_shape)"
+  printf '%s\n' "$id"
 }
 
 lsh_json() {
@@ -321,6 +322,23 @@ destroy_latitude_server_by_hostname() {
   id="$(printf '%s\n' "$list_json" | latitude_server_id 2>/dev/null || true)"
   [[ -n "$id" && "$id" != "null" ]] || return
   lsh --no-input servers destroy --id "$id" >/dev/null 2>&1 || true
+}
+
+wait_for_server_id_by_hostname() {
+  local hostname="$1"
+  local list_json id
+
+  for _ in {1..30}; do
+    list_json="$(lsh_json lsh --no-input servers list --project "$LATITUDE_PROJECT" --hostname "$hostname" --json 2>/dev/null || true)"
+    if [[ -n "$list_json" ]]; then
+      id="$(printf '%s\n' "$list_json" | latitude_server_id 2>/dev/null || true)"
+      if [[ -n "$id" && "$id" != "null" ]]; then
+        printf '%s\n' "$id"
+        return
+      fi
+    fi
+    sleep 2
+  done
 }
 
 latitude_server_id() {
