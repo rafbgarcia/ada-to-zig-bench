@@ -184,6 +184,7 @@ create_infrastructure() {
     --ssh_keys "$LATITUDE_SSH_KEYS" \
     --json)"
   SERVER_ID="$(printf '%s\n' "$server_json" | latitude_server_id)"
+  [[ -n "$SERVER_ID" && "$SERVER_ID" != "null" ]] || fail "could not parse server host ID from lsh response shape: $(printf '%s\n' "$server_json" | latitude_json_shape)"
 
   log "creating Latitude loadgen host"
   local loadgen_json
@@ -197,9 +198,7 @@ create_infrastructure() {
     --ssh_keys "$LATITUDE_SSH_KEYS" \
     --json)"
   LOADGEN_ID="$(printf '%s\n' "$loadgen_json" | latitude_server_id)"
-
-  [[ -n "$SERVER_ID" && "$SERVER_ID" != "null" ]] || fail "could not parse server host ID"
-  [[ -n "$LOADGEN_ID" && "$LOADGEN_ID" != "null" ]] || fail "could not parse loadgen host ID"
+  [[ -n "$LOADGEN_ID" && "$LOADGEN_ID" != "null" ]] || fail "could not parse loadgen host ID from lsh response shape: $(printf '%s\n' "$loadgen_json" | latitude_json_shape)"
 
   SERVER_IPV4="$(wait_for_ipv4 "$SERVER_ID")"
   LOADGEN_IPV4="$(wait_for_ipv4 "$LOADGEN_ID")"
@@ -210,8 +209,35 @@ create_infrastructure() {
 
 latitude_server_id() {
   jq -r '
-    .id // .server.id // .data.id // .data.attributes.id // .attributes.id //
-    (if (.data | type) == "array" then .data[0].id else empty end) // empty
+    def roots:
+      if type == "array" then .[] else . end;
+
+    def items:
+      if type == "array" then .[]
+      elif type == "object" then .
+      else empty end;
+
+    [
+      roots as $root
+      | ($root, $root.server?, $root.data?, $root.attributes?)
+      | items
+      | objects
+      | (.id? // .attributes?.id? // empty)
+    ]
+    | map(select(. != null and . != ""))
+    | first // empty
+  '
+}
+
+latitude_json_shape() {
+  jq -r '
+    if type == "array" then
+      "array length=\(length) first=\(.[0] | if type == "object" then "object keys=" + (keys_unsorted | join(",")) else type end)"
+    elif type == "object" then
+      "object keys=" + (keys_unsorted | join(","))
+    else
+      type
+    end
   '
 }
 
@@ -231,19 +257,32 @@ wait_for_ipv4() {
 
 server_public_ipv4() {
   lsh --no-input servers get --id "$1" --json | jq -r '
+    def roots:
+      if type == "array" then .[] else . end;
+
+    def items:
+      if type == "array" then .[]
+      elif type == "object" then .
+      else empty end;
+
     def ip_value:
       if type == "string" then .
-      elif type == "object" then (.ip // .address // .address_family4 // .value // empty)
+      elif type == "object" then (.ip? // .address? // .address_family4? // .value? // empty)
       else empty end;
 
     [
-      .primary_ipv4, .public_ipv4, .ip, .ipv4,
-      .attributes.primary_ipv4, .attributes.public_ipv4, .attributes.ip, .attributes.ipv4,
-      .server.primary_ipv4, .server.public_ipv4, .server.ip, .server.ipv4,
-      .server.attributes.primary_ipv4, .server.attributes.public_ipv4, .server.attributes.ip, .server.attributes.ipv4,
-      .data.primary_ipv4, .data.public_ipv4, .data.ip, .data.ipv4,
-      .data.attributes.primary_ipv4, .data.attributes.public_ipv4, .data.attributes.ip, .data.attributes.ipv4
-    ] | map(ip_value) | map(select(. != null and . != "")) | first // empty
+      roots as $root
+      | ($root, $root.server?, $root.data?, $root.attributes?)
+      | items
+      | objects
+      | (
+          .primary_ipv4?, .public_ipv4?, .ip?, .ipv4?,
+          .attributes?.primary_ipv4?, .attributes?.public_ipv4?, .attributes?.ip?, .attributes?.ipv4?
+        )
+      | ip_value
+    ]
+    | map(select(. != null and . != ""))
+    | first // empty
   '
 }
 
