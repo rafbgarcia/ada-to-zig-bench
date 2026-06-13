@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 LATITUDE_PROJECT="${LATITUDE_PROJECT:-${LSH_PROJECT:-default-project}}"
 LATITUDE_SITE="${LATITUDE_SITE:-ASH}"
-LATITUDE_SERVER_PLAN="${LATITUDE_SERVER_PLAN:-m4-metal-small}"
+LATITUDE_SERVER_PLAN="${LATITUDE_SERVER_PLAN:-f4-metal-small}"
 LATITUDE_LOADGEN_PLAN="${LATITUDE_LOADGEN_PLAN:-$LATITUDE_SERVER_PLAN}"
 LATITUDE_OPERATING_SYSTEM="${LATITUDE_OPERATING_SYSTEM:-ubuntu_24_04_x64_lts}"
 LATITUDE_BILLING="${LATITUDE_BILLING:-hourly}"
@@ -45,7 +45,7 @@ Environment:
   LATITUDE_PROJECT            default: default-project; can also use LSH_PROJECT
   LATITUDE_SSH_KEYS           comma-separated Latitude SSH key IDs or names
   LATITUDE_SITE               default: ASH
-  LATITUDE_SERVER_PLAN        default: m4-metal-small
+  LATITUDE_SERVER_PLAN        default: f4-metal-small
   LATITUDE_LOADGEN_PLAN       default: LATITUDE_SERVER_PLAN
   LATITUDE_OPERATING_SYSTEM   default: ubuntu_24_04_x64_lts
   LATITUDE_BILLING            default: hourly
