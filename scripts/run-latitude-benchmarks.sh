@@ -12,7 +12,7 @@ LATITUDE_BILLING="${LATITUDE_BILLING:-hourly}"
 LATITUDE_SSH_KEYS="${LATITUDE_SSH_KEYS:-}"
 LATITUDE_KEEP_INFRA="${LATITUDE_KEEP_INFRA:-0}"
 LATITUDE_PROVISION_ATTEMPTS="${LATITUDE_PROVISION_ATTEMPTS:-2}"
-SSH_READY_TIMEOUT_SECONDS="${SSH_READY_TIMEOUT_SECONDS:-60}"
+SSH_READY_TIMEOUT_SECONDS="${SSH_READY_TIMEOUT_SECONDS:-600}"
 SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
 SERVER_NAME="${SERVER_NAME:-}"
@@ -26,8 +26,17 @@ SETTLE_SECONDS="${SETTLE_SECONDS:-10}"
 TRAFFIC_SECONDS="${TRAFFIC_SECONDS:-120}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-20}"
 REMOTE_PORTS="${REMOTE_PORTS:-8080,8081,8082,8083}"
-SSH_USER="${SSH_USER:-root}"
-SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
+SSH_USER="${SSH_USER:-}"
+if [[ -z "$SSH_USER" ]]; then
+  case "$LATITUDE_OPERATING_SYSTEM" in
+    ubuntu*) SSH_USER="ubuntu" ;;
+    debian*) SSH_USER="debian" ;;
+    rocky*) SSH_USER="rocky" ;;
+    centos*) SSH_USER="centos" ;;
+    *) SSH_USER="root" ;;
+  esac
+fi
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=8)
 
 SERVER_ID=""
 LOADGEN_ID=""
@@ -53,7 +62,8 @@ Environment:
   LATITUDE_OPERATING_SYSTEM   default: ubuntu_24_04_x64_lts
   LATITUDE_BILLING            default: hourly
   LATITUDE_PROVISION_ATTEMPTS default: 2
-  SSH_READY_TIMEOUT_SECONDS   default: 60
+  SSH_USER                    default: distro user inferred from LATITUDE_OPERATING_SYSTEM
+  SSH_READY_TIMEOUT_SECONDS   default: 600
   SSH_CONNECT_TIMEOUT_SECONDS default: 5
   SERVER_NAMES                optional space-separated servers; auto-detected by default
   BENCHMARK_CONNECTIONS       default: "1000 10000 50000 100000"
@@ -228,12 +238,14 @@ create_infrastructure() {
 
     SERVER_IPV4="$(wait_for_ipv4 "$SERVER_ID")"
     LOADGEN_IPV4="$(wait_for_ipv4 "$LOADGEN_ID")"
+    log "Latitude server host $SERVER_ID has public IPv4 $SERVER_IPV4; $(server_summary "$SERVER_ID")"
+    log "Latitude loadgen host $LOADGEN_ID has public IPv4 $LOADGEN_IPV4; $(server_summary "$LOADGEN_ID")"
 
     ssh_ready=1
-    if ! wait_for_ssh "$SERVER_IPV4"; then
+    if ! wait_for_ssh "$SERVER_IPV4" "server"; then
       log "SSH did not become ready on Latitude server host $SERVER_IPV4"
       ssh_ready=0
-    elif ! wait_for_ssh "$LOADGEN_IPV4"; then
+    elif ! wait_for_ssh "$LOADGEN_IPV4" "loadgen"; then
       log "SSH did not become ready on Latitude loadgen host $LOADGEN_IPV4"
       ssh_ready=0
     fi
@@ -520,12 +532,59 @@ server_public_ipv4() {
   '
 }
 
+server_summary() {
+  local id="$1"
+  local output
+
+  output="$(lsh --no-input servers get --id "$id" --json 2>/dev/null | jq -r '
+    def roots:
+      if type == "array" then .[] else . end;
+
+    def items:
+      if type == "array" then .[]
+      elif type == "object" then .
+      else empty end;
+
+    def ip_value:
+      if type == "string" then .
+      elif type == "object" then (.ip? // .address? // .address_family4? // .value? // empty)
+      else empty end;
+
+    [
+      roots as $root
+      | ($root, $root.server?, $root.data?, $root.attributes?)
+      | items
+      | objects
+      | {
+          hostname: (.hostname? // .attributes?.hostname? // empty),
+          status: (.status? // .attributes?.status? // .state? // .attributes?.state? // empty),
+          ip: ((.primary_ipv4?, .public_ipv4?, .ip?, .ipv4?, .attributes?.primary_ipv4?, .attributes?.public_ipv4?, .attributes?.ip?, .attributes?.ipv4?) | ip_value)
+        }
+    ]
+    | first // {}
+    | to_entries
+    | map(select(.value != null and .value != ""))
+    | map("\(.key)=\(.value)")
+    | join(" ")
+  ' 2>/dev/null || true)"
+
+  if [[ -n "$output" ]]; then
+    printf '%s\n' "$output"
+  else
+    printf 'status unavailable\n'
+  fi
+}
+
 wait_for_ssh() {
   local ip="$1"
-  local deadline remaining connect_timeout
+  local role="${2:-host}"
+  local deadline remaining connect_timeout output status last_log_at
 
-  log "waiting up to ${SSH_READY_TIMEOUT_SECONDS}s for SSH on $ip"
+  log "waiting up to ${SSH_READY_TIMEOUT_SECONDS}s for SSH as $SSH_USER on $role host $ip"
   deadline=$((SECONDS + SSH_READY_TIMEOUT_SECONDS))
+  last_log_at=$SECONDS
+  status=0
+  output=""
   while (( SECONDS < deadline )); do
     remaining=$((deadline - SECONDS))
     connect_timeout="$SSH_CONNECT_TIMEOUT_SECONDS"
@@ -533,8 +592,18 @@ wait_for_ssh() {
       connect_timeout="$remaining"
     fi
 
-    if ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=$connect_timeout" "$SSH_USER@$ip" true >/dev/null 2>&1; then
+    set +e
+    output="$(ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=$connect_timeout" "$SSH_USER@$ip" 'if [ "$(id -u)" -eq 0 ]; then true; else sudo -n true; fi' 2>&1)"
+    status=$?
+    set -e
+    if (( status == 0 )); then
+      log "SSH is ready as $SSH_USER on $role host $ip"
       return
+    fi
+
+    if (( SECONDS - last_log_at >= 30 )); then
+      log "still waiting for SSH as $SSH_USER on $role host $ip; last status $status: $(summarize_lsh_output "$output")"
+      last_log_at=$SECONDS
     fi
 
     remaining=$((deadline - SECONDS))
@@ -547,7 +616,16 @@ wait_for_ssh() {
       sleep 5
     fi
   done
+  log "last SSH attempt as $SSH_USER on $role host $ip failed with status $status: $(summarize_lsh_output "$output")"
   return 1
+}
+
+remote_root_bash_command() {
+  if [[ "$SSH_USER" == "root" ]]; then
+    printf 'bash -s'
+  else
+    printf 'sudo -n bash -s'
+  fi
 }
 
 prepare_hosts() {
@@ -573,8 +651,9 @@ upload_and_prepare_server() {
   local archive="$2"
   log "preparing server host $ip"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" 'bash -s' <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
 set -euo pipefail
+BENCH_USER="${SUDO_USER:-${USER:-root}}"
 ulimit -n 1048576 || true
 cat >/etc/security/limits.d/99-bench.conf <<'LIMITS'
 * soft nofile 1048576
@@ -590,16 +669,19 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git build-essential jq procps unzip xz-utils
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-curl -fsSL https://bun.sh/install | bash
+install -d -m 755 /opt/bun
+curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash
+ln -sf /opt/bun/bin/bun /usr/local/bin/bun
 curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz -o /tmp/go.tar.gz
 rm -rf /usr/local/go
 tar -C /usr/local -xzf /tmp/go.tar.gz
-export PATH="/usr/local/go/bin:/root/.bun/bin:$PATH"
-export BUN_INSTALL="/root/.bun"
+export PATH="/usr/local/go/bin:/opt/bun/bin:$PATH"
+export BUN_INSTALL="/opt/bun"
 cd /opt/bench
 mkdir -p /opt/bench/.tmp
 node scripts/prepare-server-dependencies.mjs
 go build -o /opt/bench/.tmp/collector ./collector/cmd/collector
+chown -R "$BENCH_USER" /opt/bench
 REMOTE
 }
 
@@ -608,8 +690,9 @@ upload_and_prepare_loadgen() {
   local archive="$2"
   log "preparing loadgen host $ip"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" 'bash -s' <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
 set -euo pipefail
+BENCH_USER="${SUDO_USER:-${USER:-root}}"
 ulimit -n 1048576 || true
 cat >/etc/security/limits.d/99-bench.conf <<'LIMITS'
 * soft nofile 1048576
@@ -630,6 +713,7 @@ export PATH="/usr/local/go/bin:$PATH"
 cd /opt/bench
 mkdir -p /opt/bench/.tmp
 go build -o /opt/bench/.tmp/loadgen ./loadgen/cmd/loadgen
+chown -R "$BENCH_USER" /opt/bench
 REMOTE
 }
 
@@ -675,8 +759,8 @@ remote_server_start() {
     'bash -s' <<'REMOTE'
 set -euo pipefail
 ulimit -n 1048576 || true
-export PATH="/usr/local/go/bin:/root/.bun/bin:$PATH"
-export BUN_INSTALL="/root/.bun"
+export PATH="/usr/local/go/bin:/opt/bun/bin:$PATH"
+export BUN_INSTALL="/opt/bun"
 cd /opt/bench
 manifest="servers/$SERVER_NAME/bench.json"
 test -f "$manifest"
