@@ -30,6 +30,8 @@ SERVER_ID=""
 LOADGEN_ID=""
 SERVER_IPV4=""
 LOADGEN_IPV4=""
+SERVER_HOSTNAME=""
+LOADGEN_HOSTNAME=""
 
 usage() {
   cat <<'EOF'
@@ -79,6 +81,8 @@ cleanup() {
   set +e
   [[ -n "$LOADGEN_ID" ]] && lsh --no-input servers destroy --id "$LOADGEN_ID" >/dev/null 2>&1
   [[ -n "$SERVER_ID" ]] && lsh --no-input servers destroy --id "$SERVER_ID" >/dev/null 2>&1
+  [[ -z "$LOADGEN_ID" && -n "$LOADGEN_HOSTNAME" ]] && destroy_latitude_server_by_hostname "$LOADGEN_HOSTNAME"
+  [[ -z "$SERVER_ID" && -n "$SERVER_HOSTNAME" ]] && destroy_latitude_server_by_hostname "$SERVER_HOSTNAME"
 }
 trap cleanup EXIT
 
@@ -171,15 +175,17 @@ scenario_json() {
 create_infrastructure() {
   local suffix
   suffix="$(date -u +%Y%m%d%H%M%S)-$RANDOM"
+  SERVER_HOSTNAME="bench-server-$suffix"
+  LOADGEN_HOSTNAME="bench-loadgen-$suffix"
 
   log "creating Latitude server host"
   local server_json
-  server_json="$(lsh --no-input servers create \
+  server_json="$(lsh_json lsh --no-input servers create \
     --project "$LATITUDE_PROJECT" \
     --site "$LATITUDE_SITE" \
     --plan "$LATITUDE_SERVER_PLAN" \
     --operating_system "$LATITUDE_OPERATING_SYSTEM" \
-    --hostname "bench-server-$suffix" \
+    --hostname "$SERVER_HOSTNAME" \
     --billing "$LATITUDE_BILLING" \
     --ssh_keys "$LATITUDE_SSH_KEYS" \
     --json)"
@@ -188,12 +194,12 @@ create_infrastructure() {
 
   log "creating Latitude loadgen host"
   local loadgen_json
-  loadgen_json="$(lsh --no-input servers create \
+  loadgen_json="$(lsh_json lsh --no-input servers create \
     --project "$LATITUDE_PROJECT" \
     --site "$LATITUDE_SITE" \
     --plan "$LATITUDE_LOADGEN_PLAN" \
     --operating_system "$LATITUDE_OPERATING_SYSTEM" \
-    --hostname "bench-loadgen-$suffix" \
+    --hostname "$LOADGEN_HOSTNAME" \
     --billing "$LATITUDE_BILLING" \
     --ssh_keys "$LATITUDE_SSH_KEYS" \
     --json)"
@@ -205,6 +211,116 @@ create_infrastructure() {
 
   wait_for_ssh "$SERVER_IPV4"
   wait_for_ssh "$LOADGEN_IPV4"
+}
+
+lsh_json() {
+  local output status json parse_status
+
+  set +e
+  output="$($@ 2>&1)"
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
+    fail "lsh command failed with status $status: $(summarize_lsh_output "$output")"
+  fi
+
+  set +e
+  json="$(printf '%s' "$output" | extract_first_json)"
+  parse_status=$?
+  set -e
+
+  if (( parse_status != 0 )); then
+    fail "lsh command returned no parseable JSON: $(summarize_lsh_output "$output")"
+  fi
+
+  printf '%s\n' "$json"
+}
+
+extract_first_json() {
+  node -e '
+const fs = require("node:fs");
+
+const input = fs.readFileSync(0, "utf8");
+const trimmed = input.trim();
+
+try {
+  const parsed = JSON.parse(trimmed);
+  process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
+  process.exit(0);
+} catch {}
+
+const closing = { "{": "}", "[": "]" };
+
+for (let start = 0; start < input.length; start += 1) {
+  const first = input[start];
+  if (first !== "{" && first !== "[") continue;
+
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < input.length; index += 1) {
+    const char = input[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(closing[char]);
+    } else if (char === "}" || char === "]") {
+      if (stack.length === 0 || stack[stack.length - 1] !== char) break;
+      stack.pop();
+      if (stack.length === 0) {
+        const candidate = input.slice(start, index + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
+          process.exit(0);
+        } catch {
+          break;
+        }
+      }
+    }
+  }
+}
+
+process.exit(1);
+'
+}
+
+summarize_lsh_output() {
+  local summary
+  summary="$(printf '%s' "$1" | tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g; s/[A-Za-z0-9_=-]{48,}/[redacted]/g' | cut -c 1-240)"
+  if [[ -n "$summary" ]]; then
+    printf '%s\n' "$summary"
+  else
+    printf 'empty output\n'
+  fi
+}
+
+destroy_latitude_server_by_hostname() {
+  local hostname="$1"
+  local list_json id
+
+  list_json="$(lsh_json lsh --no-input servers list --project "$LATITUDE_PROJECT" --hostname "$hostname" --json 2>/dev/null || true)"
+  [[ -n "$list_json" ]] || return
+  id="$(printf '%s\n' "$list_json" | latitude_server_id 2>/dev/null || true)"
+  [[ -n "$id" && "$id" != "null" ]] || return
+  lsh --no-input servers destroy --id "$id" >/dev/null 2>&1 || true
 }
 
 latitude_server_id() {
