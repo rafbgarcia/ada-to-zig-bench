@@ -11,6 +11,7 @@ LATITUDE_OPERATING_SYSTEM="${LATITUDE_OPERATING_SYSTEM:-ubuntu_24_04_x64_lts}"
 LATITUDE_BILLING="${LATITUDE_BILLING:-hourly}"
 LATITUDE_SSH_KEYS="${LATITUDE_SSH_KEYS:-}"
 LATITUDE_KEEP_INFRA="${LATITUDE_KEEP_INFRA:-0}"
+LATITUDE_PROVISION_ATTEMPTS="${LATITUDE_PROVISION_ATTEMPTS:-2}"
 
 SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
@@ -49,6 +50,7 @@ Environment:
   LATITUDE_LOADGEN_PLAN       default: LATITUDE_SERVER_PLAN
   LATITUDE_OPERATING_SYSTEM   default: ubuntu_24_04_x64_lts
   LATITUDE_BILLING            default: hourly
+  LATITUDE_PROVISION_ATTEMPTS default: 2
   SERVER_NAMES                optional space-separated servers; auto-detected by default
   BENCHMARK_CONNECTIONS       default: "1000 10000 50000 100000"
   PAYLOAD_BYTES               default: 256
@@ -78,11 +80,22 @@ cleanup() {
     return
   fi
 
+  destroy_infrastructure
+}
+
+destroy_infrastructure() {
   set +e
   [[ -n "$LOADGEN_ID" ]] && lsh --no-input servers destroy --id "$LOADGEN_ID" >/dev/null 2>&1
   [[ -n "$SERVER_ID" ]] && lsh --no-input servers destroy --id "$SERVER_ID" >/dev/null 2>&1
   [[ -z "$LOADGEN_ID" && -n "$LOADGEN_HOSTNAME" ]] && destroy_latitude_server_by_hostname "$LOADGEN_HOSTNAME"
   [[ -z "$SERVER_ID" && -n "$SERVER_HOSTNAME" ]] && destroy_latitude_server_by_hostname "$SERVER_HOSTNAME"
+  SERVER_ID=""
+  LOADGEN_ID=""
+  SERVER_IPV4=""
+  LOADGEN_IPV4=""
+  SERVER_HOSTNAME=""
+  LOADGEN_HOSTNAME=""
+  set -e
 }
 trap cleanup EXIT
 
@@ -140,6 +153,8 @@ main() {
   for connections in "${SCENARIO_CONNECTIONS[@]}"; do
     [[ "$connections" =~ ^[0-9]+$ ]] || fail "invalid connection count: $connections"
   done
+  [[ "$LATITUDE_PROVISION_ATTEMPTS" =~ ^[0-9]+$ ]] || fail "invalid Latitude provision attempt count: $LATITUDE_PROVISION_ATTEMPTS"
+  (( LATITUDE_PROVISION_ATTEMPTS > 0 )) || fail "LATITUDE_PROVISION_ATTEMPTS must be greater than zero"
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
   log "scenarios: ${SCENARIO_CONNECTIONS[*]} connections; target request rate: ${REQUESTS_PER_SECOND}/s"
@@ -173,22 +188,43 @@ scenario_json() {
 }
 
 create_infrastructure() {
-  local suffix
-  suffix="$(date -u +%Y%m%d%H%M%S)-$RANDOM"
-  SERVER_HOSTNAME="bench-server-$suffix"
-  LOADGEN_HOSTNAME="bench-loadgen-$suffix"
+  local attempt suffix ssh_ready
 
-  log "creating Latitude server host"
-  SERVER_ID="$(create_latitude_server "$SERVER_HOSTNAME" "$LATITUDE_SERVER_PLAN")"
+  for (( attempt = 1; attempt <= LATITUDE_PROVISION_ATTEMPTS; attempt++ )); do
+    suffix="$(date -u +%Y%m%d%H%M%S)-$RANDOM"
+    SERVER_HOSTNAME="bench-server-$suffix"
+    LOADGEN_HOSTNAME="bench-loadgen-$suffix"
 
-  log "creating Latitude loadgen host"
-  LOADGEN_ID="$(create_latitude_server "$LOADGEN_HOSTNAME" "$LATITUDE_LOADGEN_PLAN")"
+    log "creating Latitude server host (attempt $attempt/$LATITUDE_PROVISION_ATTEMPTS)"
+    SERVER_ID="$(create_latitude_server "$SERVER_HOSTNAME" "$LATITUDE_SERVER_PLAN")"
 
-  SERVER_IPV4="$(wait_for_ipv4 "$SERVER_ID")"
-  LOADGEN_IPV4="$(wait_for_ipv4 "$LOADGEN_ID")"
+    log "creating Latitude loadgen host (attempt $attempt/$LATITUDE_PROVISION_ATTEMPTS)"
+    LOADGEN_ID="$(create_latitude_server "$LOADGEN_HOSTNAME" "$LATITUDE_LOADGEN_PLAN")"
 
-  wait_for_ssh "$SERVER_IPV4"
-  wait_for_ssh "$LOADGEN_IPV4"
+    SERVER_IPV4="$(wait_for_ipv4 "$SERVER_ID")"
+    LOADGEN_IPV4="$(wait_for_ipv4 "$LOADGEN_ID")"
+
+    ssh_ready=1
+    if ! wait_for_ssh "$SERVER_IPV4"; then
+      log "SSH did not become ready on Latitude server host $SERVER_IPV4"
+      ssh_ready=0
+    elif ! wait_for_ssh "$LOADGEN_IPV4"; then
+      log "SSH did not become ready on Latitude loadgen host $LOADGEN_IPV4"
+      ssh_ready=0
+    fi
+
+    if (( ssh_ready == 1 )); then
+      return
+    fi
+
+    if (( attempt < LATITUDE_PROVISION_ATTEMPTS )); then
+      log "destroying non-SSH-ready Latitude hosts before retry"
+      destroy_infrastructure
+      sleep 30
+    fi
+  done
+
+  fail "Latitude hosts did not become SSH-ready after $LATITUDE_PROVISION_ATTEMPTS attempt(s)"
 }
 
 create_latitude_server() {
@@ -468,7 +504,7 @@ wait_for_ssh() {
     fi
     sleep 5
   done
-  fail "SSH did not become ready on $ip"
+  return 1
 }
 
 prepare_hosts() {
