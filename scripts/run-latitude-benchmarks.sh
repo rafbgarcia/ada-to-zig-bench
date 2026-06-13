@@ -194,9 +194,9 @@ create_infrastructure() {
 create_latitude_server() {
   local hostname="$1"
   local plan="$2"
-  local json id
+  local output json id parse_status
 
-  json="$(lsh_json lsh --no-input servers create \
+  output="$(lsh_output lsh --no-input servers create \
     --project "$LATITUDE_PROJECT" \
     --site "$LATITUDE_SITE" \
     --plan "$plan" \
@@ -205,17 +205,25 @@ create_latitude_server() {
     --billing "$LATITUDE_BILLING" \
     --ssh_keys "$LATITUDE_SSH_KEYS" \
     --json)"
-  id="$(printf '%s\n' "$json" | latitude_server_id 2>/dev/null || true)"
+
+  set +e
+  json="$(printf '%s' "$output" | extract_first_resource_json)"
+  parse_status=$?
+  set -e
+
+  if (( parse_status == 0 )); then
+    id="$(printf '%s\n' "$json" | latitude_server_id 2>/dev/null || true)"
+  fi
   if [[ -z "$id" || "$id" == "null" ]]; then
     id="$(wait_for_server_id_by_hostname "$hostname")"
   fi
 
-  [[ -n "$id" && "$id" != "null" ]] || fail "could not resolve Latitude host ID for $hostname from create response shape: $(printf '%s\n' "$json" | latitude_json_shape)"
+  [[ -n "$id" && "$id" != "null" ]] || fail "could not resolve Latitude host ID for $hostname after create output: $(summarize_lsh_output "$output")"
   printf '%s\n' "$id"
 }
 
-lsh_json() {
-  local output status json parse_status
+lsh_output() {
+  local output status
 
   set +e
   output="$($@ 2>&1)"
@@ -226,43 +234,48 @@ lsh_json() {
     fail "lsh command failed with status $status: $(summarize_lsh_output "$output")"
   fi
 
+  printf '%s\n' "$output"
+}
+
+lsh_json() {
+  local output json parse_status
+
+  output="$(lsh_output "$@")"
+
   set +e
-  json="$(printf '%s' "$output" | extract_first_json)"
+  json="$(printf '%s' "$output" | extract_first_resource_json)"
   parse_status=$?
   set -e
 
   if (( parse_status != 0 )); then
-    fail "lsh command returned no parseable JSON: $(summarize_lsh_output "$output")"
+    fail "lsh command returned no resource JSON: $(summarize_lsh_output "$output")"
   fi
 
   printf '%s\n' "$json"
 }
 
-extract_first_json() {
+extract_first_resource_json() {
   node -e '
 const fs = require("node:fs");
 
 const input = fs.readFileSync(0, "utf8");
-const trimmed = input.trim();
+const candidates = [];
+const trimmed = stripAnsi(input).trim();
 
-try {
-  const parsed = JSON.parse(trimmed);
-  process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
-  process.exit(0);
-} catch {}
+addCandidate(trimmed);
 
 const closing = { "{": "}", "[": "]" };
 
-for (let start = 0; start < input.length; start += 1) {
-  const first = input[start];
+for (let start = 0; start < trimmed.length; start += 1) {
+  const first = trimmed[start];
   if (first !== "{" && first !== "[") continue;
 
   const stack = [];
   let inString = false;
   let escaped = false;
 
-  for (let index = start; index < input.length; index += 1) {
-    const char = input[index];
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
 
     if (inString) {
       if (escaped) {
@@ -286,20 +299,45 @@ for (let start = 0; start < input.length; start += 1) {
       if (stack.length === 0 || stack[stack.length - 1] !== char) break;
       stack.pop();
       if (stack.length === 0) {
-        const candidate = input.slice(start, index + 1);
-        try {
-          const parsed = JSON.parse(candidate);
-          process.stdout.write(`${JSON.stringify(parsed, null, 2)}\n`);
-          process.exit(0);
-        } catch {
-          break;
-        }
+        addCandidate(trimmed.slice(start, index + 1));
+        break;
       }
     }
   }
 }
 
+for (const candidate of candidates) {
+  if (isResourcePayload(candidate)) {
+    process.stdout.write(`${JSON.stringify(candidate, null, 2)}\n`);
+    process.exit(0);
+  }
+}
+
 process.exit(1);
+
+function addCandidate(text) {
+  if (!text) return;
+  try {
+    candidates.push(JSON.parse(text));
+  } catch {}
+}
+
+function stripAnsi(text) {
+  return text
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "");
+}
+
+function isResourcePayload(value) {
+  if (Array.isArray(value)) {
+    return value.some((item) => item && typeof item === "object" && !Array.isArray(item));
+  }
+  if (!value || typeof value !== "object") return false;
+  if (typeof value.id === "string") return true;
+  if (value.data) return isResourcePayload(value.data);
+  if (value.server) return isResourcePayload(value.server);
+  return Object.keys(value).length > 0;
+}
 '
 }
 
