@@ -84,15 +84,6 @@ jobs:
       - name: Build static web assets
         run: npm run build --prefix web
 
-      - name: Deploy prebuilt site to Vercel
-        working-directory: web
-        run: |
-          mkdir -p .vercel
-          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-          vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
-          vercel build --prod --token "$VERCEL_TOKEN"
-          vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
-
       - name: Commit benchmark artifacts
         run: |
           if git diff --quiet -- servers; then
@@ -105,3 +96,10 @@ jobs:
           git add servers
           git commit -m "Update benchmark artifacts [skip ci]"
           git push origin HEAD:main
+
+      - name: Deploy static site to Vercel
+        working-directory: web
+        run: |
+          mkdir -p dist/.vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > dist/.vercel/project.json
+          vercel deploy dist --prod --yes --token "$VERCEL_TOKEN"
