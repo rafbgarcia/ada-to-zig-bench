@@ -52,6 +52,7 @@ export default function App() {
   const [showLatency, setShowLatency] = useState(false);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState('');
+  const loadingIDsRef = useRef(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -76,10 +77,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const toLoad = selectedIDs.filter((id) => !loadedByID[id] && !pendingIDs[id]);
+    const toLoad = selectedIDs.filter((id) => !loadedByID[id] && !loadingIDsRef.current.has(id));
     if (toLoad.length === 0) return undefined;
+
+    for (const id of toLoad) loadingIDsRef.current.add(id);
 
     setPendingIDs((current) => {
       const next = { ...current };
@@ -90,7 +91,6 @@ export default function App() {
     for (const id of toLoad) {
       loadRun(id)
         .then((run) => {
-          if (cancelled) return;
           setLoadedByID((current) => ({ ...current, [id]: run }));
           setErrorsByID((current) => {
             if (!current[id]) return current;
@@ -100,11 +100,10 @@ export default function App() {
           });
         })
         .catch((nextError) => {
-          if (cancelled) return;
           setErrorsByID((current) => ({ ...current, [id]: nextError.message }));
         })
         .finally(() => {
-          if (cancelled) return;
+          loadingIDsRef.current.delete(id);
           setPendingIDs((current) => {
             const next = { ...current };
             delete next[id];
@@ -113,10 +112,8 @@ export default function App() {
         });
     }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedIDs, loadedByID, pendingIDs]);
+    return undefined;
+  }, [selectedIDs, loadedByID]);
 
   const accentByID = useMemo(() => {
     const map = {};
@@ -165,10 +162,11 @@ export default function App() {
           </div>
         ) : (
           <div className="columns">
-            {orderedSelection.map((run) => (
+            {orderedSelection.map((run, index) => (
               <BenchColumn
                 key={run.id}
                 run={run}
+                index={index}
                 accent={accentByID[run.id]}
                 loaded={loadedByID[run.id]}
                 loading={Boolean(pendingIDs[run.id])}
@@ -254,7 +252,7 @@ function Sidebar({
   );
 }
 
-function BenchColumn({ run, accent, loaded, loading, error, groups, showRuntimeEvents }) {
+function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, showRuntimeEvents }) {
   const meta = loaded?.metadata ?? run.metadata ?? {};
   const runtimeMarkers = useMemo(
     () => (loaded ? significantRuntimeEvents(loaded.runtimeEvents) : []),
@@ -262,7 +260,7 @@ function BenchColumn({ run, accent, loaded, loading, error, groups, showRuntimeE
   );
 
   return (
-    <section className="bench-column" style={{ '--accent': accent }}>
+    <section className="bench-column" style={{ '--accent': accent, animationDelay: `${index * 70}ms` }}>
       <header className="column-header">
         <div className="column-title">
           <span className="column-dot" />
