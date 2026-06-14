@@ -86,7 +86,7 @@ jobs:
 
       - name: Commit benchmark artifacts
         run: |
-          if git diff --quiet -- servers; then
+          if [ -z "$(git status --porcelain -- servers)" ]; then
             echo "No benchmark artifacts changed."
             exit 0
           fi
@@ -100,6 +100,9 @@ jobs:
       - name: Deploy static site to Vercel
         working-directory: web
         run: |
-          mkdir -p dist/.vercel
-          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > dist/.vercel/project.json
-          vercel deploy dist --prod --yes --token "$VERCEL_TOKEN"
+          rm -rf .vercel/output
+          mkdir -p .vercel/output/static
+          cp -R dist/. .vercel/output/static/
+          printf '{"version":3}\n' > .vercel/output/config.json
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"
