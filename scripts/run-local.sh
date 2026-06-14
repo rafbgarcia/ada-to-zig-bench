@@ -2,13 +2,14 @@
 set -euo pipefail
 
 SERVER_NAME="${1:-node}"
-CONNECTIONS="${2:-1000}"
+CONNECTION_TARGETS="${2:-${BENCHMARK_CONNECTIONS:-1000 10000 50000 100000}}"
 PAYLOAD_BYTES="${3:-256}"
 REQUESTS_PER_SECOND="${4:-10000}"
-TRAFFIC_SECONDS="${5:-120}"
+TRAFFIC_SECONDS="${5:-20}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-10}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-10000}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-10}"
+STABILIZE_SECONDS="${STABILIZE_SECONDS:-10}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-20}"
 
 HOST="${HOST:-127.0.0.1}"
@@ -68,6 +69,12 @@ for port in "${PORT_ARRAY[@]}"; do
 done
 
 FIRST_PORT="${PORT_ARRAY[0]//[[:space:]]/}"
+MAX_CONNECTIONS="$(CONNECTION_TARGETS="$CONNECTION_TARGETS" node <<'NODE'
+const targets = process.env.CONNECTION_TARGETS.split(/[\s,]+/).filter(Boolean).map(Number);
+if (targets.length === 0 || targets.some((value) => !Number.isInteger(value) || value <= 0)) process.exit(1);
+console.log(Math.max(...targets));
+NODE
+)"
 SERVER_PID=""
 COLLECTOR_PID=""
 
@@ -94,12 +101,14 @@ SERVER_SUITE="$SERVER_SUITE" \
 SERVER_COMMAND_DISPLAY="$SERVER_COMMAND_DISPLAY" \
 FIRST_URL="http://$HOST:$FIRST_PORT/json" \
 URLS="$URLS" \
-CONNECTIONS="$CONNECTIONS" \
+CONNECTION_TARGETS="$CONNECTION_TARGETS" \
+MAX_CONNECTIONS="$MAX_CONNECTIONS" \
 PAYLOAD_BYTES="$PAYLOAD_BYTES" \
 REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
 TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
 BASELINE_SECONDS="$BASELINE_SECONDS" \
 SETTLE_SECONDS="$SETTLE_SECONDS" \
+STABILIZE_SECONDS="$STABILIZE_SECONDS" \
 TRAFFIC_SECONDS="$TRAFFIC_SECONDS" \
 COOLDOWN_SECONDS="$COOLDOWN_SECONDS" \
 STARTED_AT="$started_at" \
@@ -114,13 +123,15 @@ const metadata = {
   server_command: process.env.SERVER_COMMAND_DISPLAY,
   url: process.env.FIRST_URL,
   urls: process.env.URLS.split(',').filter(Boolean),
-  connections: Number(process.env.CONNECTIONS),
+  connections: Number(process.env.MAX_CONNECTIONS),
+  connection_targets: process.env.CONNECTION_TARGETS.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_bytes: Number(process.env.PAYLOAD_BYTES),
   target_requests_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_messages_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_connection_rate: Number(process.env.TARGET_CONNECTION_RATE),
   baseline_seconds: Number(process.env.BASELINE_SECONDS),
   settle_seconds: Number(process.env.SETTLE_SECONDS),
+  stabilize_seconds: Number(process.env.STABILIZE_SECONDS),
   traffic_seconds: Number(process.env.TRAFFIC_SECONDS),
   cooldown_seconds: Number(process.env.COOLDOWN_SECONDS),
   started_at: process.env.STARTED_AT,
@@ -135,6 +146,8 @@ echo "starting $SERVER_NAME server"
   cd "$SERVER_DIR"
   HOST="$HOST" \
     PORTS="$SERVER_PORTS" \
+    ACTIVITY_METRICS_PATH="$RUN_WORK_DIR/activity_metrics.jsonl" \
+    SERVER_EVENTS_PATH="$RUN_WORK_DIR/server_events.jsonl" \
     RUNTIME_METRICS_PATH="$RUN_WORK_DIR/runtime_metrics.jsonl" \
     RUNTIME_EVENTS_PATH="$RUN_WORK_DIR/runtime_events.jsonl" \
     bash -lc "$SERVER_COMMAND_DISPLAY"
@@ -161,21 +174,26 @@ go build -o "$COLLECTOR_BIN" "$ROOT_DIR/collector/cmd/collector"
 ) > "$RUN_WORK_DIR/collector.log" 2>&1 &
 COLLECTOR_PID="$!"
 
-echo "running loadgen: ${BASELINE_SECONDS}s baseline, $CONNECTIONS connections at ${TARGET_CONNECTION_RATE} conn/s, ${SETTLE_SECONDS}s settle, ${REQUESTS_PER_SECOND} req/s for ${TRAFFIC_SECONDS}s, ${COOLDOWN_SECONDS}s cooldown"
+echo "running loadgen: ${BASELINE_SECONDS}s baseline, connection targets [$CONNECTION_TARGETS] at ${TARGET_CONNECTION_RATE} conn/s, ${SETTLE_SECONDS}s settle, ${REQUESTS_PER_SECOND} req/s for ${TRAFFIC_SECONDS}s per stage, ${STABILIZE_SECONDS}s stabilize, ${COOLDOWN_SECONDS}s cooldown"
 go build -o "$LOADGEN_BIN" "$ROOT_DIR/loadgen/cmd/loadgen"
+LOADGEN_STATUS=0
+set +e
 (
   "$LOADGEN_BIN" \
     --urls "$URLS" \
-    --connections "$CONNECTIONS" \
+    --connection-targets "$CONNECTION_TARGETS" \
     --payload-bytes "$PAYLOAD_BYTES" \
     --requests-per-second "$REQUESTS_PER_SECOND" \
     --target-connection-rate "$TARGET_CONNECTION_RATE" \
     --baseline-seconds "$BASELINE_SECONDS" \
     --settle-seconds "$SETTLE_SECONDS" \
+    --stabilize-seconds "$STABILIZE_SECONDS" \
     --traffic-seconds "$TRAFFIC_SECONDS" \
     --cooldown-seconds "$COOLDOWN_SECONDS" \
     --output "$RUN_WORK_DIR"
 ) > "$RUN_WORK_DIR/loadgen.log" 2>&1
+LOADGEN_STATUS=$?
+set -e
 
 cleanup
 COLLECTOR_PID=""
@@ -185,3 +203,7 @@ rm -rf "$RUN_DIR"
 mv "$RUN_WORK_DIR" "$RUN_DIR"
 
 echo "run written to $RUN_DIR"
+if (( LOADGEN_STATUS != 0 )); then
+  echo "loadgen exited with status $LOADGEN_STATUS; artifacts were preserved" >&2
+  exit "$LOADGEN_STATUS"
+fi

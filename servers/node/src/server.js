@@ -5,15 +5,24 @@ import { constants, PerformanceObserver } from 'node:perf_hooks';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
+const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
+const serverEventsPath = process.env.SERVER_EVENTS_PATH;
 const runtimeMetricsPath = process.env.RUNTIME_METRICS_PATH;
 const runtimeEventsPath = process.env.RUNTIME_EVENTS_PATH;
 
 let activeRequests = 0;
-let totalRequests = 0;
+let requestsStarted = 0;
+let responsesCompleted = 0;
 let totalErrors = 0;
-let totalConnections = 0;
+let acceptedConnections = 0;
+let closedConnections = 0;
+let responses2xx = 0;
+let responses4xx = 0;
+let responses5xx = 0;
 const sockets = new Set();
 
+const activityMetrics = activityMetricsPath ? createWriteStream(activityMetricsPath, { flags: 'a' }) : null;
+const serverEvents = serverEventsPath ? createWriteStream(serverEventsPath, { flags: 'a' }) : null;
 const runtimeMetrics = runtimeMetricsPath ? createWriteStream(runtimeMetricsPath, { flags: 'a' }) : null;
 const runtimeEvents = runtimeEventsPath ? createWriteStream(runtimeEventsPath, { flags: 'a' }) : null;
 const startedAt = Date.now();
@@ -23,6 +32,11 @@ for (const server of servers) {
   server.listen(server.port, host, () => {
     console.log(`node HTTP JSON server listening on http://${host}:${server.port}`);
   });
+}
+
+if (activityMetrics) {
+  writeActivityMetric();
+  setInterval(writeActivityMetric, 1000).unref();
 }
 
 if (runtimeMetrics) {
@@ -60,8 +74,10 @@ function createServer(port) {
         ok: true,
         active_connections: sockets.size,
         active_requests: activeRequests,
-        total_connections: totalConnections,
-        total_requests: totalRequests,
+        accepted_connections_total: acceptedConnections,
+        closed_connections_total: closedConnections,
+        requests_started_total: requestsStarted,
+        responses_completed_total: responsesCompleted,
         total_errors: totalErrors,
       });
       return;
@@ -78,18 +94,23 @@ function createServer(port) {
     }
 
     activeRequests += 1;
+    requestsStarted += 1;
     try {
       const request = JSON.parse(await readBody(req, 1 << 20));
       if (!Number.isSafeInteger(request.id) || typeof request.payload !== 'string') {
         totalErrors += 1;
+        recordResponse(400);
+        writeServerEvent('request_error', { reason: 'invalid_request', status_code: 400 });
         writeJSON(res, 400, { error: 'invalid_request' });
         return;
       }
 
-      totalRequests += 1;
+      recordResponse(200);
       writeJSON(res, 200, responseFor(request));
-    } catch {
+    } catch (error) {
       totalErrors += 1;
+      recordResponse(400);
+      writeServerEvent('request_error', { reason: error.message === 'body_too_large' ? 'body_too_large' : 'invalid_json', status_code: 400 });
       writeJSON(res, 400, { error: 'invalid_json' });
     } finally {
       activeRequests -= 1;
@@ -103,8 +124,11 @@ function createServer(port) {
 
   server.on('connection', (socket) => {
     sockets.add(socket);
-    totalConnections += 1;
-    socket.on('close', () => sockets.delete(socket));
+    acceptedConnections += 1;
+    socket.on('close', () => {
+      sockets.delete(socket);
+      closedConnections += 1;
+    });
   });
 
   return server;
@@ -155,6 +179,30 @@ function writeJSON(res, statusCode, value) {
   res.end(body);
 }
 
+function recordResponse(statusCode) {
+  responsesCompleted += 1;
+  if (statusCode >= 200 && statusCode < 300) responses2xx += 1;
+  else if (statusCode >= 400 && statusCode < 500) responses4xx += 1;
+  else if (statusCode >= 500) responses5xx += 1;
+}
+
+function activitySample() {
+  return {
+    ts: new Date().toISOString(),
+    elapsed_seconds: elapsedSeconds(),
+    active_connections: sockets.size,
+    accepted_connections_total: acceptedConnections,
+    closed_connections_total: closedConnections,
+    active_requests: activeRequests,
+    requests_started_total: requestsStarted,
+    responses_completed_total: responsesCompleted,
+    responses_2xx_total: responses2xx,
+    responses_4xx_total: responses4xx,
+    responses_5xx_total: responses5xx,
+    request_errors_total: totalErrors,
+  };
+}
+
 function runtimeSample() {
   const memory = process.memoryUsage();
   const heap = v8.getHeapStatistics();
@@ -162,11 +210,6 @@ function runtimeSample() {
     ts: new Date().toISOString(),
     elapsed_seconds: elapsedSeconds(),
     runtime: 'node',
-    active_connections: sockets.size,
-    active_requests: activeRequests,
-    total_connections: totalConnections,
-    total_requests: totalRequests,
-    total_errors: totalErrors,
     rss_bytes: memory.rss,
     heap_total_bytes: memory.heapTotal,
     heap_used_bytes: memory.heapUsed,
@@ -182,8 +225,22 @@ function runtimeSample() {
   };
 }
 
+function writeActivityMetric() {
+  activityMetrics.write(`${JSON.stringify(activitySample())}\n`);
+}
+
 function writeRuntimeMetric() {
   runtimeMetrics.write(`${JSON.stringify(runtimeSample())}\n`);
+}
+
+function writeServerEvent(event, fields = {}) {
+  if (!serverEvents) return;
+  serverEvents.write(`${JSON.stringify({
+    ts: new Date().toISOString(),
+    elapsed_seconds: elapsedSeconds(),
+    event,
+    ...fields,
+  })}\n`);
 }
 
 function writeRuntimeEvent(event) {
@@ -226,6 +283,8 @@ function shutdown() {
     if (remaining <= 0) {
       runtimeMetrics?.end();
       runtimeEvents?.end();
+      activityMetrics?.end();
+      serverEvents?.end();
       process.exit(0);
     }
   };

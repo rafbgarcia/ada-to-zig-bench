@@ -9,7 +9,7 @@ Suite 1 is `http-json`:
 - `/health` is used by orchestration.
 - `/runtime` and runtime JSONL files expose runtime-specific memory/GC counters where available.
 
-The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, fixed request rate, and external process metrics for CPU/RSS/threads/open FDs.
+The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, staged cumulative connection targets, fixed request rate per stage, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
 
 ## Server Layout
 
@@ -40,27 +40,28 @@ Requirements: Go 1.24, Node.js 24, and Bun if running `servers/bun`.
 
 ```sh
 go mod download
-./scripts/run-local.sh node 50 128 100 10
+./scripts/run-local.sh node "50 100" 128 100 10
 ```
 
 Arguments:
 
 ```text
-./scripts/run-local.sh <server> <connections> <payload_bytes> <requests_per_second> <traffic_seconds>
+./scripts/run-local.sh <server> <connection_targets> <payload_bytes> <requests_per_second> <traffic_seconds_per_stage>
 ```
 
 Defaults:
 
 ```text
-server:               node
-connections:          1000
-payload_bytes:        256
-requests/sec:         10000
-traffic_seconds:      120
-baseline:             10s
-ramp:                 10000 new connections/sec target
-settle:               10s
-cooldown:             20s
+server:                    node
+connection_targets:        "1000 10000 50000 100000"
+payload_bytes:             256
+requests/sec:              10000
+traffic_seconds_per_stage: 20
+baseline:                  10s
+ramp:                      10000 new connections/sec target
+settle_after_ramp:         10s
+stabilize_after_traffic:   10s
+cooldown:                  20s
 ```
 
 The command writes one benchmark dataset under:
@@ -70,7 +71,10 @@ servers/<server>/benchmark/
   metadata.json
   summary.json
   server_metrics.jsonl
+  activity_metrics.jsonl
+  server_events.jsonl
   loadgen_metrics.jsonl
+  loadgen_errors.jsonl
   runtime_metrics.jsonl
   runtime_events.jsonl
   server.log
@@ -109,10 +113,15 @@ SSH_CONNECT_TIMEOUT_SECONDS=5
 BENCHMARK_CONNECTIONS="1000 10000 50000 100000"
 REQUESTS_PER_SECOND=10000
 PAYLOAD_BYTES=256
-TRAFFIC_SECONDS=120
+TRAFFIC_SECONDS=20
+STABILIZE_SECONDS=10
 ```
 
 The server listens on four ports by default (`8080,8081,8082,8083`) so the loadgen can hold 100k outbound TCP connections without exhausting the client ephemeral port range for one destination tuple.
+
+`server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, and Linux TCP socket state counts where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors.
+
+`BENCHMARK_CONNECTIONS` is a cumulative connection schedule. The default `1000 10000 50000 100000` means the loadgen opens connections until it reaches 1k, sends traffic for `TRAFFIC_SECONDS`, idles for `STABILIZE_SECONDS`, opens more connections until it reaches 10k total, and repeats until the final target. Connections stay open between stages.
 
 ## GitHub Workflow
 
@@ -153,7 +162,7 @@ npm run build --prefix web
 
 - Use dedicated bare metal for the measured server and a separate dedicated host for load generation.
 - Keep loadgen and server in the same Latitude site. Public IPv4 is the default because Latitude virtual networks require extra OS/VLAN setup; private networking can be added later if public-network variance becomes material.
-- Keep the request rate fixed across connection scenarios at first. This makes 1k/10k/50k/100k mostly measure connection/runtime overhead instead of mixing in more application work.
-- Treat latency as a backpressure/correctness signal, not the primary ranking metric. Primary metrics are CPU percent, RSS, threads, and open FDs over the 2-minute traffic window.
+- Keep the request rate fixed across connection stages at first. This makes 1k/10k/50k/100k mostly measure accumulated connection/runtime overhead instead of mixing in more application work.
+- Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, and open FDs over the staged timeline.
 - Install each language/runtime and implementation dependencies before the measured run. The runner does this during host preparation from each `bench.json` manifest.
-- Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains all configured scenarios.
+- Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains all configured connection targets.

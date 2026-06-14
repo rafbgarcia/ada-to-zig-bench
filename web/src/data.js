@@ -1,54 +1,81 @@
 export const metricGroups = [
   {
-    id: 'traffic',
-    title: 'Traffic Throughput',
-    description: 'Sent requests and received responses per second across the selected run.',
-    unit: '/s',
+    id: 'connections',
+    title: 'Connection Load',
+    description: 'Configured connection target, loadgen active connections, and server active connections.',
+    unit: '',
     series: [
-      { key: 'sentPerSecond', label: 'Requests', color: '#2563eb' },
-      { key: 'receivedPerSecond', label: 'Responses', color: '#0f766e' },
+      { key: 'targetConnections', label: 'Target', color: '#475467' },
+      { key: 'loadgenConnections', label: 'Loadgen active', color: '#2563eb' },
+      { key: 'serverConnections', label: 'Server active', color: '#0f766e' },
     ],
   },
   {
-    id: 'connections',
-    title: 'Connections And CPU',
-    description: 'Connection ramp behavior alongside server CPU demand.',
+    id: 'work',
+    title: 'Server Work',
+    description: 'Requests started, responses completed, and in-flight requests as reported by the server implementation.',
+    unit: '/s',
+    dualAxis: true,
+    series: [
+      { key: 'serverRequestsPerSecond', label: 'Requests started', color: '#2563eb', unit: '/s' },
+      { key: 'serverResponsesPerSecond', label: 'Responses completed', color: '#0f766e', unit: '/s' },
+      { key: 'activeRequests', label: 'In flight', color: '#7c3aed', axis: 'right' },
+    ],
+  },
+  {
+    id: 'resources',
+    title: 'CPU And Memory',
+    description: 'Server process CPU and resident memory sampled externally by the collector.',
     unit: '',
     dualAxis: true,
     series: [
-      { key: 'activeConnections', label: 'Connections', color: '#334155', axis: 'left' },
-      { key: 'cpuPercent', label: 'CPU', color: '#b45309', axis: 'right', unit: '%' },
+      { key: 'rssMb', label: 'RSS', color: '#0891b2', unit: 'MB' },
+      { key: 'cpuPercent', label: 'CPU', color: '#b42318', axis: 'right', unit: '%' },
     ],
   },
   {
-    id: 'latency',
-    title: 'Latency Percentiles',
-    description: 'Response-time distribution during active traffic.',
-    unit: 'ms',
+    id: 'process',
+    title: 'Process Shape',
+    description: 'Open file descriptors and thread count for the measured server process.',
+    unit: '',
     series: [
-      { key: 'p50LatencyMs', label: 'p50', color: '#14b8a6' },
-      { key: 'p90LatencyMs', label: 'p90', color: '#f59e0b' },
-      { key: 'p99LatencyMs', label: 'p99', color: '#ef4444' },
-      { key: 'maxLatencyMs', label: 'Max', color: '#7c3aed' },
+      { key: 'openFds', label: 'Open FDs', color: '#334155' },
+      { key: 'threads', label: 'Threads', color: '#7c3aed' },
     ],
   },
   {
-    id: 'memory',
-    title: 'Memory Profile',
-    description: 'Server RSS and runtime heap used over time.',
+    id: 'runtime',
+    title: 'Runtime Memory',
+    description: 'Runtime heap counters where the implementation exposes them.',
     unit: 'MB',
     series: [
-      { key: 'rssMb', label: 'RSS', color: '#0891b2' },
-      { key: 'heapUsedMb', label: 'Heap used', color: '#8b5cf6' },
+      { key: 'heapUsedMb', label: 'Heap used', color: '#8b5cf6', unit: 'MB' },
+      { key: 'heapTotalMb', label: 'Heap total', color: '#14b8a6', unit: 'MB' },
     ],
   },
   {
     id: 'errors',
-    title: 'Errors',
-    description: 'Load-generator error rate for quick anomaly checks.',
+    title: 'Errors And Statuses',
+    description: 'Server-side request errors and non-2xx responses, with loadgen-observed failures for diagnosis.',
     unit: '/s',
     series: [
-      { key: 'errorsPerSecond', label: 'Errors', color: '#dc2626' },
+      { key: 'serverErrorsPerSecond', label: 'Server errors', color: '#dc2626', unit: '/s' },
+      { key: 'responses4xxPerSecond', label: '4xx responses', color: '#f59e0b', unit: '/s' },
+      { key: 'responses5xxPerSecond', label: '5xx responses', color: '#991b1b', unit: '/s' },
+      { key: 'loadgenErrorsPerSecond', label: 'Loadgen errors', color: '#475467', unit: '/s' },
+    ],
+  },
+  {
+    id: 'latency',
+    title: 'Latency Signal',
+    description: 'Client-observed response latency, kept as a secondary saturation signal.',
+    unit: 'ms',
+    secondary: true,
+    series: [
+      { key: 'p50LatencyMs', label: 'p50', color: '#14b8a6', unit: 'ms' },
+      { key: 'p90LatencyMs', label: 'p90', color: '#f59e0b', unit: 'ms' },
+      { key: 'p99LatencyMs', label: 'p99', color: '#ef4444', unit: 'ms' },
+      { key: 'maxLatencyMs', label: 'Max', color: '#7c3aed', unit: 'ms' },
     ],
   },
 ];
@@ -58,7 +85,8 @@ export const phaseColors = {
   ramp: '#dbeafe',
   settle: '#dcfce7',
   traffic: '#ffedd5',
-  cooldown: '#ede9fe',
+  stabilize: '#ede9fe',
+  cooldown: '#f2f4f7',
   unknown: '#f8fafc',
 };
 
@@ -67,47 +95,60 @@ export async function fetchRuns() {
 }
 
 export async function loadRun(runID) {
-  const [metadata, summary, serverRaw, loadgenRaw, runtimeRaw, eventsRaw] = await Promise.all([
+  const [metadata, summary, serverRaw, activityRaw, loadgenRaw, runtimeRaw, runtimeEventsRaw, serverEventsRaw, loadgenErrorsRaw] = await Promise.all([
     fetchJSON(runFileURL(runID, 'metadata.json')),
     fetchJSON(runFileURL(runID, 'summary.json')).catch(() => null),
-    fetchText(runFileURL(runID, 'server_metrics.jsonl')),
-    fetchText(runFileURL(runID, 'loadgen_metrics.jsonl')),
+    fetchText(runFileURL(runID, 'server_metrics.jsonl')).catch(() => ''),
+    fetchText(runFileURL(runID, 'activity_metrics.jsonl')).catch(() => ''),
+    fetchText(runFileURL(runID, 'loadgen_metrics.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'runtime_metrics.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'runtime_events.jsonl')).catch(() => ''),
+    fetchText(runFileURL(runID, 'server_events.jsonl')).catch(() => ''),
+    fetchText(runFileURL(runID, 'loadgen_errors.jsonl')).catch(() => ''),
   ]);
 
   const serverMetrics = parseJSONL(serverRaw);
+  const activityMetrics = withDerivedActivityRates(parseJSONL(activityRaw));
   const loadgenMetrics = parseJSONL(loadgenRaw);
   const runtimeMetrics = parseJSONL(runtimeRaw).map((sample) => ({
     ...sample,
     heap_used_mb: bytesToMB(sample.heap_used_bytes ?? sample.used_heap_size_bytes ?? 0),
+    heap_total_mb: bytesToMB(sample.heap_total_bytes ?? sample.total_heap_size_bytes ?? 0),
   }));
-  const runtimeEvents = parseJSONL(eventsRaw);
+  const runtimeEvents = parseJSONL(runtimeEventsRaw);
+  const serverEvents = parseJSONL(serverEventsRaw);
+  const loadgenErrors = parseJSONL(loadgenErrorsRaw);
 
-  const timelineStart = findTimelineStart(metadata, serverMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents);
-  annotateTimelineSeconds(serverMetrics, timelineStart);
-  annotateTimelineSeconds(loadgenMetrics, timelineStart);
-  annotateTimelineSeconds(runtimeMetrics, timelineStart);
-  annotateTimelineSeconds(runtimeEvents, timelineStart);
+  const timelineStart = findTimelineStart(metadata, serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors);
+  for (const group of [serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors]) {
+    annotateTimelineSeconds(group, timelineStart);
+  }
 
   const maxElapsed = Math.max(
     0,
     ...serverMetrics.map((sample) => sample.timeline_seconds ?? 0),
+    ...activityMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...loadgenMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...runtimeMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...runtimeEvents.map((event) => event.timeline_seconds ?? 0),
+    ...serverEvents.map((event) => event.timeline_seconds ?? 0),
+    ...loadgenErrors.map((event) => event.timeline_seconds ?? 0),
   );
+
   const phases = buildPhaseRanges(loadgenMetrics, maxElapsed);
-  const timeline = buildTimeline({ serverMetrics, loadgenMetrics, runtimeMetrics, maxElapsed });
+  const timeline = buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, maxElapsed });
 
   return {
     runID,
     metadata,
     summary,
     serverMetrics,
+    activityMetrics,
     loadgenMetrics,
     runtimeMetrics,
     runtimeEvents,
+    serverEvents,
+    loadgenErrors,
     phases,
     timeline,
     maxElapsed: Math.round(maxElapsed),
@@ -128,11 +169,7 @@ export function nearestSample(samples, elapsed) {
   return best;
 }
 
-export function countGCEvents(runtimeEvents, elapsed) {
-  return runtimeEvents.filter((event) => event.event === 'gc' && (event.timeline_seconds ?? 0) <= elapsed).length;
-}
-
-export function significantGCEvents(runtimeEvents) {
+export function significantRuntimeEvents(runtimeEvents) {
   return runtimeEvents
     .filter((event) => event.event === 'gc')
     .filter((event) => event.kind === 'major' || Number(event.duration_ms ?? 0) >= 5)
@@ -143,34 +180,90 @@ export function significantGCEvents(runtimeEvents) {
     }));
 }
 
-function buildTimeline({ serverMetrics, loadgenMetrics, runtimeMetrics, maxElapsed }) {
+export function recentEvents(loaded, elapsed, limit = 12) {
+  if (!loaded) return [];
+  const events = [
+    ...loaded.serverEvents.map((event) => ({ source: 'server', ...event })),
+    ...loaded.loadgenErrors.map((event) => ({ source: 'loadgen', event: 'loadgen_error', ...event })),
+  ];
+  return events
+    .filter((event) => Number(event.timeline_seconds ?? 0) <= elapsed)
+    .sort((a, b) => Number(b.timeline_seconds ?? 0) - Number(a.timeline_seconds ?? 0))
+    .slice(0, limit);
+}
+
+function withDerivedActivityRates(samples) {
+  let previous = null;
+  return samples.map((sample) => {
+    const elapsed = Number(sample.elapsed_seconds ?? 0);
+    const deltaSeconds = previous ? Math.max(1, elapsed - Number(previous.elapsed_seconds ?? 0)) : 1;
+    const next = {
+      ...sample,
+      requests_started_per_second: delta(sample, previous, 'requests_started_total') / deltaSeconds,
+      responses_completed_per_second: delta(sample, previous, 'responses_completed_total') / deltaSeconds,
+      responses_2xx_per_second: delta(sample, previous, 'responses_2xx_total') / deltaSeconds,
+      responses_4xx_per_second: delta(sample, previous, 'responses_4xx_total') / deltaSeconds,
+      responses_5xx_per_second: delta(sample, previous, 'responses_5xx_total') / deltaSeconds,
+      request_errors_per_second: delta(sample, previous, 'request_errors_total') / deltaSeconds,
+    };
+    previous = sample;
+    return next;
+  });
+}
+
+function delta(sample, previous, key) {
+  if (!previous) return 0;
+  const current = Number(sample[key] ?? 0);
+  const last = Number(previous[key] ?? 0);
+  if (!Number.isFinite(current) || !Number.isFinite(last)) return 0;
+  return Math.max(0, current - last);
+}
+
+function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, maxElapsed }) {
   const length = Math.max(1, Math.round(maxElapsed)) + 1;
   const rows = [];
   const serverBySecond = samplesBySecond(serverMetrics);
+  const activityBySecond = samplesBySecond(activityMetrics);
   const loadgenBySecond = samplesBySecond(loadgenMetrics);
   const runtimeBySecond = samplesBySecond(runtimeMetrics);
   let server = serverMetrics[0] ?? {};
+  let activity = activityMetrics[0] ?? {};
   let loadgen = loadgenMetrics[0] ?? {};
   let runtime = runtimeMetrics[0] ?? {};
 
   for (let second = 0; second < length; second += 1) {
     server = serverBySecond.get(second) ?? server;
+    activity = activityBySecond.get(second) ?? activity;
     loadgen = loadgenBySecond.get(second) ?? loadgen;
     runtime = runtimeBySecond.get(second) ?? runtime;
     rows.push({
       second,
       phase: loadgen.phase ?? 'idle',
-      activeConnections: numberValue(loadgen.active_connections),
-      sentPerSecond: numberValue(loadgen.sent_per_second),
-      receivedPerSecond: numberValue(loadgen.received_per_second),
-      errorsPerSecond: numberValue(loadgen.errors_per_second),
+      stageIndex: numberValue(loadgen.stage_index, -1),
+      targetConnections: nullableNumber(loadgen.target_connections),
+      targetRequestsPerSecond: nullableNumber(loadgen.target_requests_per_second),
+      loadgenConnections: nullableNumber(loadgen.active_connections),
+      serverConnections: nullableNumber(activity.active_connections ?? server.tcp_established),
+      activeRequests: numberValue(activity.active_requests),
+      serverRequestsPerSecond: numberValue(activity.requests_started_per_second),
+      serverResponsesPerSecond: numberValue(activity.responses_completed_per_second),
+      responses4xxPerSecond: numberValue(activity.responses_4xx_per_second),
+      responses5xxPerSecond: numberValue(activity.responses_5xx_per_second),
+      serverErrorsPerSecond: numberValue(activity.request_errors_per_second),
+      loadgenErrorsPerSecond: numberValue(loadgen.errors_per_second),
+      loadgenSentPerSecond: numberValue(loadgen.sent_per_second),
+      loadgenReceivedPerSecond: numberValue(loadgen.received_per_second),
       p50LatencyMs: numberValue(loadgen.p50_latency_ms),
       p90LatencyMs: numberValue(loadgen.p90_latency_ms),
       p99LatencyMs: numberValue(loadgen.p99_latency_ms),
       maxLatencyMs: numberValue(loadgen.max_latency_ms),
       cpuPercent: numberValue(server.cpu_percent),
       rssMb: numberValue(server.rss_mb ?? bytesToMB(server.rss_bytes)),
+      threads: nullableNumber(server.threads),
+      openFds: nullableNumber(server.open_fds),
+      tcpEstablished: nullableNumber(server.tcp_established),
       heapUsedMb: numberValue(runtime.heap_used_mb),
+      heapTotalMb: numberValue(runtime.heap_total_mb),
     });
   }
 
@@ -217,13 +310,16 @@ function buildPhaseRanges(samples, maxElapsed) {
   const ranges = [];
   for (const sample of samples) {
     const name = sample.phase ?? 'unknown';
+    const targetConnections = sample.target_connections ?? null;
+    const stageIndex = sample.stage_index ?? -1;
     const elapsed = sample.timeline_seconds ?? sample.elapsed_seconds ?? 0;
     const last = ranges[ranges.length - 1];
 
-    if (!last || last.name !== name) {
-      ranges.push({ name, start: elapsed, end: elapsed });
+    if (!last || last.name !== name || last.stageIndex !== stageIndex) {
+      ranges.push({ name, stageIndex, targetConnections, start: elapsed, end: elapsed });
     } else {
       last.end = elapsed;
+      last.targetConnections = targetConnections ?? last.targetConnections;
     }
   }
 
@@ -251,9 +347,15 @@ function bytesToMB(value) {
   return Number(value || 0) / 1024 / 1024;
 }
 
-function numberValue(value) {
-  const numeric = Number(value ?? 0);
-  return Number.isFinite(numeric) ? numeric : 0;
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function numberValue(value, fallback = 0) {
+  const numeric = Number(value ?? fallback);
+  return Number.isFinite(numeric) ? numeric : fallback;
 }
 
 function runFileURL(runID, fileName) {

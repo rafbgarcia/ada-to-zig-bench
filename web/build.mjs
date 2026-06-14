@@ -12,7 +12,10 @@ const runFiles = [
   'metadata.json',
   'summary.json',
   'server_metrics.jsonl',
+  'activity_metrics.jsonl',
+  'server_events.jsonl',
   'loadgen_metrics.jsonl',
+  'loadgen_errors.jsonl',
   'runtime_metrics.jsonl',
   'runtime_events.jsonl',
 ];
@@ -42,25 +45,11 @@ async function collectRuns() {
 
     try {
       const metadata = JSON.parse(await readFile(path.join(sourceRunDir, 'metadata.json'), 'utf8'));
-      const summary = await readOptionalJSON(path.join(sourceRunDir, 'summary.json'));
-      const scenarioRuns = scenarioRunsFor(entry.name, metadata, summary);
-
-      if (scenarioRuns.length > 0) {
-        for (const scenario of scenarioRuns) {
-          const distRunDir = path.join(distRunsDir, scenario.id);
-          await mkdir(distRunDir, { recursive: true });
-          await copyRunFiles(path.join(sourceRunDir, scenario.path), distRunDir);
-          await writeJSON(path.join(distRunDir, 'metadata.json'), scenario.metadata);
-          await writeJSON(path.join(distRunDir, 'summary.json'), scenario.summary);
-          runs.push({ id: scenario.id, metadata: scenario.metadata });
-        }
-      } else {
-        const runID = isSafePathSegment(metadata.id) ? metadata.id : entry.name;
-        const distRunDir = path.join(distRunsDir, runID);
-        await mkdir(distRunDir, { recursive: true });
-        await copyRunFiles(sourceRunDir, distRunDir);
-        runs.push({ id: runID, metadata });
-      }
+      const runID = isSafePathSegment(metadata.id) ? metadata.id : entry.name;
+      const distRunDir = path.join(distRunsDir, runID);
+      await mkdir(distRunDir, { recursive: true });
+      await copyRunFiles(sourceRunDir, distRunDir);
+      runs.push({ id: runID, metadata });
     } catch (error) {
       if (error.code !== 'ENOENT') console.warn(`Skipping ${entry.name}: ${error.message}`);
     }
@@ -68,37 +57,6 @@ async function collectRuns() {
 
   runs.sort((a, b) => String(b.metadata.started_at).localeCompare(String(a.metadata.started_at)));
   return runs;
-}
-
-function scenarioRunsFor(serverName, metadata, summary) {
-  if (!Array.isArray(summary?.scenarios)) return [];
-
-  return summary.scenarios
-    .filter((scenario) => scenario && isSafePath(scenario.path) && Number.isFinite(Number(scenario.connections)))
-    .map((scenario) => {
-      const connectionsLabel = formatConnectionsLabel(Number(scenario.connections));
-      const id = `${serverName}-${connectionsLabel}`;
-      return {
-        id,
-        path: scenario.path,
-        metadata: {
-          ...metadata,
-          id,
-          scenario: connectionsLabel,
-          connections: Number(scenario.connections),
-          payload_bytes: scenario.payload_bytes ?? metadata.payload_bytes,
-          target_requests_per_second: scenario.target_requests_per_second ?? metadata.target_requests_per_second ?? scenario.target_messages_per_second ?? metadata.target_messages_per_second,
-          target_messages_per_second: scenario.target_requests_per_second ?? metadata.target_requests_per_second ?? scenario.target_messages_per_second ?? metadata.target_messages_per_second,
-          target_connection_rate: scenario.target_connection_rate ?? metadata.target_connection_rate,
-          traffic_seconds: scenario.traffic_seconds ?? metadata.traffic_seconds,
-          started_at: scenario.started_at ?? metadata.started_at,
-        },
-        summary: {
-          ...scenario,
-          url: scenario.url ?? metadata.url,
-        },
-      };
-    });
 }
 
 async function copyRunFiles(sourceRunDir, distRunDir) {
@@ -126,16 +84,6 @@ async function writeJSON(filePath, value) {
 
 function isSafePathSegment(value) {
   return /^[A-Za-z0-9_.-]+$/.test(value);
-}
-
-function isSafePath(value) {
-  return typeof value === 'string'
-    && value.split('/').every((segment) => segment && isSafePathSegment(segment));
-}
-
-function formatConnectionsLabel(connections) {
-  if (connections >= 1000 && connections % 1000 === 0) return `${connections / 1000}k`;
-  return String(connections);
 }
 
 function runViteBuild() {

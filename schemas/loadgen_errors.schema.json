@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "phase", "stage_index", "target_connections", "operation", "connection_id", "error"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "phase": { "type": "string" },
+    "stage_index": { "type": "integer" },
+    "target_connections": { "type": "integer", "minimum": 0 },
+    "operation": { "type": "string" },
+    "connection_id": { "type": "integer" },
+    "target": { "type": "string" },
+    "request_id": { "type": "integer" },
+    "error": { "type": "string" }
+  }
+}

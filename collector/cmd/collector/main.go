@@ -28,15 +28,23 @@ type sample struct {
 	RSSMB          float64 `json:"rss_mb"`
 	Threads        *int    `json:"threads,omitempty"`
 	OpenFDs        *int    `json:"open_fds,omitempty"`
+	TCPSockets     *int    `json:"tcp_sockets,omitempty"`
+	TCPEstablished *int    `json:"tcp_established,omitempty"`
+	TCPListen      *int    `json:"tcp_listen,omitempty"`
+	TCPCloseWait   *int    `json:"tcp_close_wait,omitempty"`
 	Error          string  `json:"error,omitempty"`
 }
 
 type linuxProcessSample struct {
-	processTicks uint64
-	systemTicks  uint64
-	rssBytes     uint64
-	threads      *int
-	openFDs      *int
+	processTicks   uint64
+	systemTicks    uint64
+	rssBytes       uint64
+	threads        *int
+	openFDs        *int
+	tcpSockets     *int
+	tcpEstablished *int
+	tcpListen      *int
+	tcpCloseWait   *int
 }
 
 type linuxCollector struct {
@@ -101,7 +109,7 @@ func main() {
 
 func writeSample(encoder *json.Encoder, pid int, startedAt time.Time, linux *linuxCollector) {
 	now := time.Now().UTC()
-	cpu, rssBytes, threads, openFDs, err := readProcess(pid, linux)
+	cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, err := readProcess(pid, linux)
 	entry := sample{
 		Timestamp:      now.Format(time.RFC3339),
 		ElapsedSeconds: int64(now.Sub(startedAt).Seconds()),
@@ -111,6 +119,10 @@ func writeSample(encoder *json.Encoder, pid int, startedAt time.Time, linux *lin
 		RSSMB:          float64(rssBytes) / 1024 / 1024,
 		Threads:        threads,
 		OpenFDs:        openFDs,
+		TCPSockets:     tcpSockets,
+		TCPEstablished: tcpEstablished,
+		TCPListen:      tcpListen,
+		TCPCloseWait:   tcpCloseWait,
 	}
 	if err != nil {
 		entry.Error = err.Error()
@@ -119,16 +131,16 @@ func writeSample(encoder *json.Encoder, pid int, startedAt time.Time, linux *lin
 	_ = encoder.Encode(entry)
 }
 
-func readProcess(pid int, linux *linuxCollector) (float64, uint64, *int, *int, error) {
+func readProcess(pid int, linux *linuxCollector) (float64, uint64, *int, *int, *int, *int, *int, *int, error) {
 	if runtime.GOOS == "linux" {
-		cpu, rssBytes, threads, openFDs, err := linux.read()
+		cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, err := linux.read()
 		if err == nil {
-			return cpu, rssBytes, threads, openFDs, nil
+			return cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, nil
 		}
 	}
 
 	cpu, rssKB, err := readPS(pid)
-	return cpu, rssKB * 1024, readThreads(pid), readOpenFDs(pid), err
+	return cpu, rssKB * 1024, readThreads(pid), readOpenFDs(pid), nil, nil, nil, nil, err
 }
 
 func newLinuxCollector(pid int) *linuxCollector {
@@ -139,10 +151,10 @@ func newLinuxCollector(pid int) *linuxCollector {
 	}
 }
 
-func (collector *linuxCollector) read() (float64, uint64, *int, *int, error) {
+func (collector *linuxCollector) read() (float64, uint64, *int, *int, *int, *int, *int, *int, error) {
 	current, err := collector.readRaw()
 	if err != nil {
-		return 0, 0, nil, nil, err
+		return 0, 0, nil, nil, nil, nil, nil, nil, err
 	}
 
 	cpu := 0.0
@@ -155,7 +167,7 @@ func (collector *linuxCollector) read() (float64, uint64, *int, *int, error) {
 	}
 	collector.last = current
 
-	return cpu, current.rssBytes, current.threads, current.openFDs, nil
+	return cpu, current.rssBytes, current.threads, current.openFDs, current.tcpSockets, current.tcpEstablished, current.tcpListen, current.tcpCloseWait, nil
 }
 
 func (collector *linuxCollector) readRaw() (*linuxProcessSample, error) {
@@ -168,12 +180,18 @@ func (collector *linuxCollector) readRaw() (*linuxProcessSample, error) {
 		return nil, err
 	}
 
+	tcpSockets, tcpEstablished, tcpListen, tcpCloseWait := readTCPStateCounts(collector.pid)
+
 	return &linuxProcessSample{
-		processTicks: processTicks,
-		systemTicks:  systemTicks,
-		rssBytes:     rssBytes,
-		threads:      readThreads(collector.pid),
-		openFDs:      readOpenFDs(collector.pid),
+		processTicks:   processTicks,
+		systemTicks:    systemTicks,
+		rssBytes:       rssBytes,
+		threads:        readThreads(collector.pid),
+		openFDs:        readOpenFDs(collector.pid),
+		tcpSockets:     tcpSockets,
+		tcpEstablished: tcpEstablished,
+		tcpListen:      tcpListen,
+		tcpCloseWait:   tcpCloseWait,
 	}, nil
 }
 
@@ -306,4 +324,69 @@ func readOpenFDs(pid int) *int {
 
 	value := len(entries)
 	return &value
+}
+
+func readTCPStateCounts(pid int) (*int, *int, *int, *int) {
+	if runtime.GOOS != "linux" {
+		return nil, nil, nil, nil
+	}
+
+	inodes := socketInodes(pid)
+	if len(inodes) == 0 {
+		zero := 0
+		return &zero, &zero, &zero, &zero
+	}
+
+	total, established, listen, closeWait := 0, 0, 0, 0
+	for _, filePath := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		file, err := os.Open(filePath)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		if scanner.Scan() {
+			// header
+		}
+		for scanner.Scan() {
+			fields := strings.Fields(scanner.Text())
+			if len(fields) < 10 {
+				continue
+			}
+			if !inodes[fields[9]] {
+				continue
+			}
+			total++
+			switch fields[3] {
+			case "01":
+				established++
+			case "0A":
+				listen++
+			case "08":
+				closeWait++
+			}
+		}
+		_ = file.Close()
+	}
+
+	return &total, &established, &listen, &closeWait
+}
+
+func socketInodes(pid int) map[string]bool {
+	entries, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return nil
+	}
+
+	inodes := make(map[string]bool)
+	for _, entry := range entries {
+		target, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, entry.Name()))
+		if err != nil || !strings.HasPrefix(target, "socket:[") || !strings.HasSuffix(target, "]") {
+			continue
+		}
+		inode := strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")
+		if inode != "" {
+			inodes[inode] = true
+		}
+	}
+	return inodes
 }

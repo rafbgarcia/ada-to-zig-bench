@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "active_requests", "requests_started_total", "responses_completed_total", "request_errors_total"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "active_connections": { "type": ["integer", "null"], "minimum": 0 },
+    "accepted_connections_total": { "type": ["integer", "null"], "minimum": 0 },
+    "closed_connections_total": { "type": ["integer", "null"], "minimum": 0 },
+    "active_requests": { "type": "integer", "minimum": 0 },
+    "requests_started_total": { "type": "integer", "minimum": 0 },
+    "responses_completed_total": { "type": "integer", "minimum": 0 },
+    "responses_2xx_total": { "type": "integer", "minimum": 0 },
+    "responses_4xx_total": { "type": "integer", "minimum": 0 },
+    "responses_5xx_total": { "type": "integer", "minimum": 0 },
+    "request_errors_total": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -11,7 +11,10 @@
     "rss_mb": { "type": "number" },
     "threads": { "type": "integer" },
     "open_fds": { "type": "integer" },
+    "tcp_sockets": { "type": "integer" },
+    "tcp_established": { "type": "integer" },
+    "tcp_listen": { "type": "integer" },
+    "tcp_close_wait": { "type": "integer" },
     "error": { "type": "string" }
   }
 }
-

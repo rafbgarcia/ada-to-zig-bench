@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["ts", "elapsed_seconds", "event"],
+  "properties": {
+    "ts": { "type": "string" },
+    "elapsed_seconds": { "type": "integer" },
+    "event": { "type": "string" },
+    "reason": { "type": "string" },
+    "status_code": { "type": "integer" },
+    "message": { "type": "string" }
+  }
+}
