@@ -31,15 +31,15 @@ SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
 SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
-BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000 10000 100000 1000000}"
+BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
-REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-10000}"
+REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
-BASELINE_SECONDS="${BASELINE_SECONDS:-10}"
-SETTLE_SECONDS="${SETTLE_SECONDS:-10}"
-STABILIZE_SECONDS="${STABILIZE_SECONDS:-10}"
-TRAFFIC_SECONDS="${TRAFFIC_SECONDS:-20}"
-COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-20}"
+BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
+SETTLE_SECONDS="${SETTLE_SECONDS:-0}"
+STABILIZE_SECONDS="${STABILIZE_SECONDS:-0}"
+TRAFFIC_SECONDS="${TRAFFIC_SECONDS:-10}"
+COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-0}"
 DEFAULT_REMOTE_PORTS="$(port_range_csv 8080 32)"
 REMOTE_PORTS="${REMOTE_PORTS:-$DEFAULT_REMOTE_PORTS}"
 SSH_USER="${SSH_USER:-}"
@@ -82,13 +82,13 @@ Environment:
   SSH_READY_TIMEOUT_SECONDS   default: 600
   SSH_CONNECT_TIMEOUT_SECONDS default: 5
   SERVER_NAMES                optional space-separated servers; auto-detected by default
-  BENCHMARK_CONNECTIONS       default: "1000 10000 100000 1000000" cumulative connection targets
+  BENCHMARK_CONNECTIONS       default: "1000000" connection target
   PAYLOAD_BYTES               default: 256
-  REQUESTS_PER_SECOND         default: 10000
+  REQUESTS_PER_SECOND         default: 100000 final request rate
   TARGET_CONNECTION_RATE      default: 50000
   REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
-  TRAFFIC_SECONDS             default: 20 per connection target
-  STABILIZE_SECONDS           default: 10 after each traffic stage
+  TRAFFIC_SECONDS             default: 10 request-rate ramp seconds
+  STABILIZE_SECONDS           default: 0 after traffic
   LATITUDE_KEEP_INFRA         set to 1 to keep bare metal hosts after the run
 EOF
 }
@@ -212,7 +212,7 @@ main() {
   (( SSH_CONNECT_TIMEOUT_SECONDS > 0 )) || fail "SSH_CONNECT_TIMEOUT_SECONDS must be greater than zero"
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
-  log "connection targets: ${SCENARIO_CONNECTIONS[*]}; target request rate: ${REQUESTS_PER_SECOND}/s"
+  log "connection target(s): ${SCENARIO_CONNECTIONS[*]}; final request rate: ${REQUESTS_PER_SECOND}/s"
   log "server target ports: $REMOTE_PORTS"
 
   create_infrastructure
@@ -919,7 +919,7 @@ run_loadgen() {
   local bench_nofile
   remote_connection_targets="$(connection_targets_csv)"
   bench_nofile="$(required_nofile)"
-  log "running staged connection load from loadgen host: $connection_targets"
+  log "running connection load from loadgen host: $connection_targets"
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
     BENCH_NOFILE="$bench_nofile" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \

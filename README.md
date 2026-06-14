@@ -9,7 +9,7 @@ Suite 1 is `http-json`:
 - `/health` is used by orchestration.
 - `/runtime` and runtime JSONL files expose runtime-specific memory/GC counters where available.
 
-The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, staged cumulative connection targets, fixed request rate per stage, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
+The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, a fixed connection ramp to the target, a fixed request-rate ramp to the target, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
 
 ## Server Layout
 
@@ -47,22 +47,22 @@ go mod download
 Arguments:
 
 ```text
-./scripts/run-local.sh <server> <connection_targets> <payload_bytes> <requests_per_second> <traffic_seconds_per_stage>
+./scripts/run-local.sh <server> <connection_target> <payload_bytes> <requests_per_second> <request_ramp_seconds>
 ```
 
 Defaults:
 
 ```text
 server:                    node
-connection_targets:        "1000 10000 100000 1000000"
+connection_target:         "1000000"
 payload_bytes:             256
-requests/sec:              10000
-traffic_seconds_per_stage: 20
-baseline:                  10s
-ramp:                      10000 new connections/sec target locally; 50000 on Latitude
-settle_after_ramp:         10s
-stabilize_after_traffic:   10s
-cooldown:                  20s
+requests/sec:              100000 final target
+request_ramp_seconds:      10
+baseline:                  0s
+connection_ramp:           50000 new connections/sec target
+settle_after_ramp:         0s
+stabilize_after_traffic:   0s
+cooldown:                  0s
 ```
 
 The command writes one benchmark dataset under:
@@ -111,12 +111,15 @@ LATITUDE_PROVISION_ATTEMPTS=2
 SSH_USER=ubuntu
 SSH_READY_TIMEOUT_SECONDS=600
 SSH_CONNECT_TIMEOUT_SECONDS=5
-BENCHMARK_CONNECTIONS="1000 10000 100000 1000000"
-REQUESTS_PER_SECOND=10000
+BENCHMARK_CONNECTIONS=1000000
+REQUESTS_PER_SECOND=100000
 PAYLOAD_BYTES=256
-TRAFFIC_SECONDS=20
-STABILIZE_SECONDS=10
 TARGET_CONNECTION_RATE=50000
+TRAFFIC_SECONDS=10
+BASELINE_SECONDS=0
+SETTLE_SECONDS=0
+STABILIZE_SECONDS=0
+COOLDOWN_SECONDS=0
 ```
 
 The server listens on 32 ports by default (`8080..8111`) so one loadgen IPv4 can hold 1M outbound TCP connections without exhausting the client ephemeral port range for one destination tuple. Override `REMOTE_PORTS` when running on Latitude, or the optional `ports` array in `servers/<server>/bench.json` for local runs, if you need a different fanout. As a rule of thumb, keep one target port per roughly 32k client connections when a single loadgen source IP is used, especially for back-to-back runs where previous sockets can still be in `TIME_WAIT`.
@@ -125,9 +128,9 @@ The Latitude runner raises Linux limits on both hosts before the measured run. I
 
 `server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, and Linux TCP socket state counts where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors.
 
-`summary.json.total_errors` and `loadgen_errors.jsonl` capture response, protocol, and connection failures observed by the load generator. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. A run fails orchestration when the load generator cannot reach the configured final connection target or cannot produce a complete summary.
+`summary.json.total_errors` and `loadgen_errors.jsonl` capture response, protocol, and connection failures observed by the load generator. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. A run fails orchestration when the load generator cannot reach the configured connection target or cannot produce a complete summary.
 
-`BENCHMARK_CONNECTIONS` is a cumulative connection schedule. The default `1000 10000 100000 1000000` means the loadgen opens connections until it reaches 1k, sends traffic for `TRAFFIC_SECONDS`, idles for `STABILIZE_SECONDS`, opens more connections until it reaches 10k total, and repeats until the final target. Connections stay open between stages.
+`BENCHMARK_CONNECTIONS` is the connection target. The default `1000000` means the loadgen opens connections at `TARGET_CONNECTION_RATE=50000` until it reaches 1M, then ramps request dispatch to `REQUESTS_PER_SECOND=100000` over `TRAFFIC_SECONDS=10`. With defaults, the benchmark reaches 1M connections in about 20 seconds and reaches 100k requests per second 10 seconds later.
 
 ## GitHub Workflow
 
@@ -168,7 +171,7 @@ npm run build --prefix web
 
 - Use dedicated bare metal for the measured server and a separate dedicated host for load generation.
 - Keep loadgen and server in the same Latitude site. Public IPv4 is the default because Latitude virtual networks require extra OS/VLAN setup; private networking can be added later if public-network variance becomes material.
-- Keep the request rate fixed across connection stages at first. This makes 1k/10k/100k/1M mostly measure accumulated connection/runtime overhead instead of mixing in more application work.
-- Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, and open FDs over the staged timeline.
+- Keep the connection and request-rate ramps fixed across implementations. This makes differences easier to compare because every runtime sees the same 50k connections/sec ramp followed by the same 10k requests/sec/sec ramp.
+- Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, and open FDs over the ramp timeline.
 - Install each language/runtime and implementation dependencies before the measured run. The runner does this during host preparation from each `bench.json` manifest.
-- Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains all configured connection targets.
+- Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains the configured connection target.

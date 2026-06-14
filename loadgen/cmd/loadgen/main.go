@@ -188,16 +188,16 @@ func main() {
 
 	flag.StringVar(&targetURL, "url", "http://127.0.0.1:8080/json", "HTTP JSON URL")
 	flag.StringVar(&targetURLs, "urls", "", "comma-separated HTTP JSON URLs; overrides --url when set")
-	flag.IntVar(&connections, "connections", 100, "number of persistent HTTP connections")
-	flag.StringVar(&connectionTargets, "connection-targets", "", "comma- or space-separated cumulative persistent connection targets; overrides --connections when set")
+	flag.IntVar(&connections, "connections", 1_000_000, "number of persistent HTTP connections")
+	flag.StringVar(&connectionTargets, "connection-targets", "", "comma- or space-separated persistent connection targets; overrides --connections when set")
 	flag.IntVar(&payloadBytes, "payload-bytes", 256, "payload string size in bytes")
-	flag.IntVar(&requestsPerSecond, "requests-per-second", 0, "global target requests per second; defaults to one request per connection per second")
-	flag.IntVar(&targetConnectionRate, "target-connection-rate", 10000, "target new HTTP connections per second during ramp")
-	flag.IntVar(&baselineSeconds, "baseline-seconds", 5, "seconds to sample before opening connections")
-	flag.IntVar(&settleSeconds, "settle-seconds", 5, "seconds to hold connections idle after ramp")
-	flag.IntVar(&stabilizeSeconds, "stabilize-seconds", -1, "seconds to hold all current connections idle after each traffic stage; defaults to --settle-seconds")
-	flag.IntVar(&trafficSeconds, "traffic-seconds", 120, "seconds to send benchmark requests")
-	flag.IntVar(&cooldownSeconds, "cooldown-seconds", 10, "seconds to sample after traffic stops while connections stay open")
+	flag.IntVar(&requestsPerSecond, "requests-per-second", 100_000, "final global target requests per second")
+	flag.IntVar(&targetConnectionRate, "target-connection-rate", 50_000, "target new HTTP connections per second during ramp")
+	flag.IntVar(&baselineSeconds, "baseline-seconds", 0, "seconds to sample before opening connections")
+	flag.IntVar(&settleSeconds, "settle-seconds", 0, "seconds to hold connections idle after ramp")
+	flag.IntVar(&stabilizeSeconds, "stabilize-seconds", -1, "seconds to hold all current connections idle after traffic; defaults to --settle-seconds")
+	flag.IntVar(&trafficSeconds, "traffic-seconds", 10, "seconds to ramp benchmark requests up to --requests-per-second")
+	flag.IntVar(&cooldownSeconds, "cooldown-seconds", 0, "seconds to sample after traffic stops while connections stay open")
 	flag.StringVar(&outputDir, "output", "runs/manual", "output run directory")
 	flag.Parse()
 
@@ -206,13 +206,10 @@ func main() {
 		fatalf("parse connection targets: %v", err)
 	}
 	maxConnections := connectionSchedule[len(connectionSchedule)-1]
-	if requestsPerSecond == 0 {
-		requestsPerSecond = maxConnections
-	}
 	if stabilizeSeconds < 0 {
 		stabilizeSeconds = settleSeconds
 	}
-	if maxConnections <= 0 || payloadBytes < 0 || requestsPerSecond < 0 || targetConnectionRate <= 0 || baselineSeconds < 0 || settleSeconds < 0 || stabilizeSeconds < 0 || trafficSeconds <= 0 || cooldownSeconds < 0 {
+	if maxConnections <= 0 || payloadBytes < 0 || requestsPerSecond <= 0 || targetConnectionRate <= 0 || baselineSeconds < 0 || settleSeconds < 0 || stabilizeSeconds < 0 || trafficSeconds <= 0 || cooldownSeconds < 0 {
 		fatalf("invalid arguments")
 	}
 
@@ -311,6 +308,9 @@ func main() {
 		rampStartedAt := time.Now().UTC()
 		openConnections(runCtx, targetConnections, targetConnectionRate, targets, payload, &active, &peak, &sent, &received, &errorsCount, latencyCh, registerCh, &wg, &marker, errorLog)
 		rampSeconds := int(math.Ceil(time.Since(rampStartedAt).Seconds()))
+		if active.Load() < int64(targetConnections) {
+			cancel()
+		}
 
 		marker.Store(runMarker{Phase: "settle", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond})
 		if waitPhase(runCtx, time.Duration(settleSeconds)*time.Second) != nil {
@@ -658,8 +658,9 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 	}
 
 	var carry float64
-	perTick := float64(targetConnectionRate) / 10.0
-	ticker := time.NewTicker(100 * time.Millisecond)
+	tickInterval := time.Second
+	perTick := float64(targetConnectionRate) * tickInterval.Seconds()
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
 	launchBatch := func() {
@@ -696,14 +697,14 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 		}
 	}
 
-	launchBatch()
-
-	for int(active.Load()) < targetConnections && opened < targetConnections {
+	for int(active.Load()) < targetConnections {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			launchBatch()
+			if opened < targetConnections {
+				launchBatch()
+			}
 		}
 	}
 }
@@ -716,10 +717,12 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 
 	tickInterval := 100 * time.Millisecond
 	totalTicks := int(end.Sub(start) / tickInterval)
+	totalSeconds := end.Sub(start).Seconds()
+	rpsStep := float64(requestsPerSecond) / totalSeconds
 	var nextConn int
-	perTick := float64(requestsPerSecond) / 10.0
 	var carry float64
-	dispatch := func() {
+	dispatch := func(targetRPS float64) {
+		perTick := targetRPS * tickInterval.Seconds()
 		carry += perTick
 		batch := int(math.Floor(carry))
 		carry -= float64(batch)
@@ -758,11 +761,17 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 	}
 
 	for tick := 1; tick <= totalTicks; tick++ {
-		if waitUntil(ctx, start.Add(time.Duration(tick)*tickInterval)) != nil {
+		tickTime := start.Add(time.Duration(tick) * tickInterval)
+		if waitUntil(ctx, tickTime) != nil {
 			return
 		}
 
-		dispatch()
+		elapsedSeconds := math.Ceil(tickTime.Sub(start).Seconds())
+		targetRPS := math.Min(float64(requestsPerSecond), rpsStep*elapsedSeconds)
+		current := currentMarker(marker)
+		current.TargetRPS = int(math.Round(targetRPS))
+		marker.Store(current)
+		dispatch(targetRPS)
 	}
 }
 
