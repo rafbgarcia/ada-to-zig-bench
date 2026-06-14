@@ -25,13 +25,7 @@ import {
   significantRuntimeEvents,
 } from './data.js';
 import {
-  formatCompact,
-  formatFixed,
-  formatNumber,
-  formatRatio,
-  formatRate,
-  formatRunDate,
-  formatSeriesValue,
+  formatCompact, formatSeriesValue
 } from './format.js';
 
 const chartMargin = { top: 16, right: 14, bottom: 4, left: 0 };
@@ -197,9 +191,7 @@ function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <div className="eyebrow"><BarChart3 size={15} /> Server Benchmark</div>
-        <h1>Connection + JSON</h1>
-        <p>Compare resource cost for long-lived HTTP connections with small JSON work.</p>
+        <h1>Ada to Zig bench</h1>
       </div>
 
       <div className="sidebar-section">
@@ -219,7 +211,7 @@ function Sidebar({
                     aria-pressed={selected}
                     onClick={() => onToggleRun(run.id)}
                   >
-                    <span className="run-check" style={selected ? { background: accentByID[run.id], borderColor: accentByID[run.id] } : undefined}>
+                    <span className="run-check">
                       {selected ? <Check size={12} strokeWidth={3} /> : null}
                     </span>
                     <span className="run-info">
@@ -269,7 +261,7 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
             <small>{meta.runtime ?? meta.language ?? 'runtime'}</small>
           </div>
         </div>
-        <dl className="column-meta">
+        {/* <dl className="column-meta">
           <div>
             <dt>Target RPS</dt>
             <dd>{meta.target_requests_per_second ? formatRate(meta.target_requests_per_second) : '--'}</dd>
@@ -286,63 +278,41 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
             <dt>Started</dt>
             <dd>{meta.started_at ? formatRunDate(meta.started_at) : '--'}</dd>
           </div>
-        </dl>
+        </dl> */}
       </header>
 
-      {error ? (
-        <div className="column-state error"><AlertTriangle size={16} /> {error}</div>
-      ) : loading || !loaded ? (
-        <div className="column-state"><Loader2 size={16} className="spin" /> Loading run…</div>
-      ) : (
-        <>
-          <RunSummary loaded={loaded} />
-          <div className="column-charts">
-            {groups.map((group) => (
-              <MetricChart
-                key={group.id}
-                group={group}
-                loaded={loaded}
-                phases={loaded.phases ?? []}
-                showRuntimeEvents={showRuntimeEvents}
-                runtimeMarkers={runtimeMarkers}
-              />
-            ))}
-          </div>
-        </>
-      )}
+      <div className="column-body">
+        {error ? (
+          <div className="column-state error"><AlertTriangle size={16} /> {error}</div>
+        ) : loading || !loaded ? (
+          <div className="column-state"><Loader2 size={16} className="spin" /> Loading run…</div>
+        ) : (
+          <>
+            <div className="column-charts">
+              {groups.map((group) => (
+                <MetricChart
+                  key={group.id}
+                  group={group}
+                  loaded={loaded}
+                  phases={loaded.phases ?? []}
+                  showRuntimeEvents={showRuntimeEvents}
+                  runtimeMarkers={runtimeMarkers}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </section>
-  );
-}
-
-function RunSummary({ loaded }) {
-  const stats = useMemo(() => summarizeRun(loaded), [loaded]);
-
-  return (
-    <div className="summary-grid">
-      <SummaryItem label="Target" value={stats.targetStatus} tone={stats.success ? undefined : 'bad'} />
-      <SummaryItem label="Peak conns" value={`${formatCompact(stats.peakConnections)} / ${formatCompact(stats.targetConnections)}`} tone={stats.success ? undefined : 'warn'} />
-      <SummaryItem label="Peak RSS" value={`${formatFixed(stats.peakRssMb, 1)} MB`} />
-      <SummaryItem label="RSS / 10k conns" value={`${formatFixed(stats.peakRssPer10k, 1)} MB`} />
-      <SummaryItem label="Avg CPU traffic" value={`${formatFixed(stats.avgTrafficCpu, 1)}%`} />
-      <SummaryItem label="FDs / conn" value={formatRatio(stats.peakFdsPerConnection, 2)} />
-      <SummaryItem label="Errors" value={formatNumber(stats.totalErrors)} tone={stats.totalErrors > 0 ? 'bad' : undefined} />
-      <SummaryItem label="Dispatch misses" value={formatNumber(stats.totalDispatchMisses)} tone={stats.totalDispatchMisses > 0 ? 'warn' : undefined} />
-    </div>
-  );
-}
-
-function SummaryItem({ label, value, tone }) {
-  return (
-    <div className={`summary-item${tone ? ` summary-${tone}` : ''}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
 function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers }) {
   const data = loaded?.timeline ?? [];
   const maxElapsed = loaded?.maxElapsed ?? 1;
+  const series = group.id === 'connections'
+    ? group.series.filter((entry) => entry.key !== 'targetConnections')
+    : group.series;
   const [surfaceRef, surfaceSize] = useElementSize();
   const chartReady = surfaceSize.width > 0 && surfaceSize.height > 0;
 
@@ -363,7 +333,7 @@ function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers 
             data={data}
             margin={chartMargin}
           >
-            <CartesianGrid stroke="#eef1f5" strokeDasharray="3 4" vertical={false} />
+            <CartesianGrid stroke="#262a31" strokeDasharray="3 4" vertical={false} />
             {phases.map((phase) => (
               <ReferenceArea
                 key={`${group.id}-${phase.name}-${phase.stageIndex}-${phase.start}`}
@@ -371,7 +341,7 @@ function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers 
                 x2={phase.end}
                 yAxisId="left"
                 fill={phaseColors[phase.name] ?? phaseColors.unknown}
-                fillOpacity={0.46}
+                fillOpacity={0.1}
                 strokeOpacity={0}
               />
             ))}
@@ -383,16 +353,18 @@ function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers 
               axisLine={false}
               minTickGap={26}
               tickFormatter={(value) => `${Math.round(value)}s`}
-              stroke="#98a2b3"
+              stroke="#6b7180"
               fontSize={11}
+              tick={{ fill: '#8b909b' }}
             />
             <YAxis
               yAxisId="left"
               tickLine={false}
               axisLine={false}
               width={40}
-              stroke="#98a2b3"
+              stroke="#6b7180"
               fontSize={11}
+              tick={{ fill: '#8b909b' }}
               tickFormatter={formatCompact}
             />
             {group.dualAxis ? (
@@ -402,14 +374,15 @@ function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers 
                 tickLine={false}
                 axisLine={false}
                 width={36}
-                stroke="#c2410c"
+                stroke="#d98a4f"
                 fontSize={11}
+                tick={{ fill: '#d98a4f' }}
                 tickFormatter={formatCompact}
               />
             ) : null}
-            <Tooltip content={<ChartTooltip group={group} />} cursor={{ stroke: '#cbd2dc', strokeWidth: 1 }} />
-            <Legend verticalAlign="top" height={28} iconType="circle" wrapperStyle={{ fontSize: 11, paddingBottom: 4 }} />
-            {group.series.map((series) => (
+            <Tooltip content={<ChartTooltip group={group} />} cursor={{ stroke: '#3a3f48', strokeWidth: 1 }} />
+            <Legend verticalAlign="top" height={28} iconType="circle" wrapperStyle={{ fontSize: 11, paddingBottom: 4, color: '#aeb3bd' }} />
+            {series.map((series) => (
               <Line
                 key={series.key}
                 yAxisId={series.axis === 'right' ? 'right' : 'left'}
@@ -516,43 +489,4 @@ function ChartTooltip({ active, payload, label, group }) {
 function formatTargets(values) {
   if (!Array.isArray(values) || values.length === 0) return '--';
   return values.map((value) => formatCompact(value)).join(' → ');
-}
-
-function summarizeRun(loaded) {
-  const timeline = loaded?.timeline ?? [];
-  const summary = loaded?.summary ?? {};
-  const connectionTargets = Array.isArray(summary.connection_targets)
-    ? summary.connection_targets.map(Number).filter(Number.isFinite)
-    : [];
-  const targetConnections = Number(summary.connections ?? (connectionTargets.length ? Math.max(...connectionTargets) : 0));
-  const peakConnections = Number(summary.peak_active_connections ?? maxOf(timeline, 'loadgenConnections'));
-  const success = Boolean(summary.success ?? (targetConnections > 0 && peakConnections >= targetConnections));
-  const trafficRows = timeline.filter((row) => row.phase === 'traffic' || row.phase === 'payload_sweep');
-  const peakRssMb = maxOf(timeline, 'rssMb');
-  const peakRssPer10k = maxOf(timeline, 'rssMbPer10kConnections');
-  const peakFdsPerConnection = maxOf(timeline, 'fdsPerConnection');
-  const avgTrafficCpu = averageOf(trafficRows, 'cpuPercent');
-  return {
-    targetStatus: success ? 'Hit' : 'Miss',
-    success,
-    targetConnections,
-    peakConnections,
-    peakRssMb,
-    peakRssPer10k,
-    peakFdsPerConnection,
-    avgTrafficCpu,
-    totalErrors: Number(summary.total_errors ?? 0),
-    totalDispatchMisses: Number(summary.total_dispatch_misses ?? 0),
-  };
-}
-
-function maxOf(rows, key) {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
-  return values.length ? Math.max(...values) : 0;
-}
-
-function averageOf(rows, key) {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
-  if (values.length === 0) return 0;
-  return values.reduce((total, value) => total + value, 0) / values.length;
 }
