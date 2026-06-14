@@ -4,6 +4,5 @@
   "runtime": "Bun",
   "suite": "http-json",
   "install": "",
-  "run": "bun src/server.js",
-  "ports": [8080, 8081, 8082, 8083]
+  "run": "bun src/server.js"
 }

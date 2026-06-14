@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SERVER_NAME="${1:-node}"
-CONNECTION_TARGETS="${2:-${BENCHMARK_CONNECTIONS:-1000 10000 50000 100000}}"
+CONNECTION_TARGETS="${2:-${BENCHMARK_CONNECTIONS:-1000 10000 100000 1000000}}"
 PAYLOAD_BYTES="${3:-256}"
 REQUESTS_PER_SECOND="${4:-10000}"
 TRAFFIC_SECONDS="${5:-20}"
@@ -18,6 +18,22 @@ TMP_DIR="$ROOT_DIR/.tmp"
 LOADGEN_BIN="$TMP_DIR/loadgen"
 COLLECTOR_BIN="$TMP_DIR/collector"
 MANIFEST="$ROOT_DIR/servers/$SERVER_NAME/bench.json"
+
+port_range_csv() {
+  local start="$1"
+  local count="$2"
+  local ports=()
+  local index
+
+  for (( index = 0; index < count; index++ )); do
+    ports+=("$((start + index))")
+  done
+
+  local IFS=,
+  printf '%s' "${ports[*]}"
+}
+
+DEFAULT_SERVER_PORTS="$(port_range_csv 8080 32)"
 
 if [[ ! -f "$MANIFEST" ]]; then
   echo "unknown server '$SERVER_NAME'; expected servers/<name>/bench.json" >&2
@@ -40,7 +56,7 @@ SERVER_LANGUAGE="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.r
 SERVER_RUNTIME="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.runtime || '');" "$MANIFEST")"
 SERVER_SUITE="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.suite || 'http-json');" "$MANIFEST")"
 SERVER_COMMAND_DISPLAY="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.run || '');" "$MANIFEST")"
-SERVER_PORTS="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log((m.ports || [8080]).join(','));" "$MANIFEST")"
+SERVER_PORTS="$(DEFAULT_SERVER_PORTS="$DEFAULT_SERVER_PORTS" node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log((m.ports || process.env.DEFAULT_SERVER_PORTS.split(',').map(Number)).join(','));" "$MANIFEST")"
 INSTALL_COMMAND="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.install || '');" "$MANIFEST")"
 
 if [[ -z "$SERVER_COMMAND_DISPLAY" ]]; then

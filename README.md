@@ -22,12 +22,13 @@ Each implementation lives under `servers/<name>/` and is described by `bench.jso
   "runtime": "Node.js",
   "suite": "http-json",
   "install": "",
-  "run": "node src/server.js",
-  "ports": [8080, 8081, 8082, 8083]
+  "run": "node src/server.js"
 }
 ```
 
 Use `install` for language/package setup needed inside that implementation directory. Keep it empty when the implementation only needs a runtime already installed on the benchmark host.
+
+`ports` is optional in `bench.json`. Runners default to `8080..8111` and pass the chosen list through the `PORTS` environment variable. Implementations should listen on every comma-separated port in `PORTS`; define `ports` in a manifest only when an implementation needs a custom local default.
 
 The current implementations are:
 
@@ -53,12 +54,12 @@ Defaults:
 
 ```text
 server:                    node
-connection_targets:        "1000 10000 50000 100000"
+connection_targets:        "1000 10000 100000 1000000"
 payload_bytes:             256
 requests/sec:              10000
 traffic_seconds_per_stage: 20
 baseline:                  10s
-ramp:                      10000 new connections/sec target
+ramp:                      10000 new connections/sec target locally; 50000 on Latitude
 settle_after_ramp:         10s
 stabilize_after_traffic:   10s
 cooldown:                  20s
@@ -110,20 +111,23 @@ LATITUDE_PROVISION_ATTEMPTS=2
 SSH_USER=ubuntu
 SSH_READY_TIMEOUT_SECONDS=600
 SSH_CONNECT_TIMEOUT_SECONDS=5
-BENCHMARK_CONNECTIONS="1000 10000 50000 100000"
+BENCHMARK_CONNECTIONS="1000 10000 100000 1000000"
 REQUESTS_PER_SECOND=10000
 PAYLOAD_BYTES=256
 TRAFFIC_SECONDS=20
 STABILIZE_SECONDS=10
+TARGET_CONNECTION_RATE=50000
 ```
 
-The server listens on four ports by default (`8080,8081,8082,8083`) so the loadgen can hold 100k outbound TCP connections without exhausting the client ephemeral port range for one destination tuple.
+The server listens on 32 ports by default (`8080..8111`) so one loadgen IPv4 can hold 1M outbound TCP connections without exhausting the client ephemeral port range for one destination tuple. Override `REMOTE_PORTS` when running on Latitude, or the optional `ports` array in `servers/<server>/bench.json` for local runs, if you need a different fanout. As a rule of thumb, keep one target port per roughly 32k client connections when a single loadgen source IP is used, especially for back-to-back runs where previous sockets can still be in `TIME_WAIT`.
+
+The Latitude runner raises Linux limits on both hosts before the measured run. It sets `fs.nr_open`, `fs.file-max`, `net.core.somaxconn`, `net.ipv4.tcp_max_syn_backlog`, `net.ipv4.ip_local_port_range`, `net.ipv4.tcp_tw_reuse`, and a per-process `nofile` limit derived from the largest configured connection target. For 1M connections, you need this class of OS tuning; the default Linux `nofile` limit and a single destination port will not be enough.
 
 `server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, and Linux TCP socket state counts where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors.
 
 `summary.json.total_errors` and `loadgen_errors.jsonl` capture response, protocol, and connection failures observed by the load generator. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. A run fails orchestration when the load generator cannot reach the configured final connection target or cannot produce a complete summary.
 
-`BENCHMARK_CONNECTIONS` is a cumulative connection schedule. The default `1000 10000 50000 100000` means the loadgen opens connections until it reaches 1k, sends traffic for `TRAFFIC_SECONDS`, idles for `STABILIZE_SECONDS`, opens more connections until it reaches 10k total, and repeats until the final target. Connections stay open between stages.
+`BENCHMARK_CONNECTIONS` is a cumulative connection schedule. The default `1000 10000 100000 1000000` means the loadgen opens connections until it reaches 1k, sends traffic for `TRAFFIC_SECONDS`, idles for `STABILIZE_SECONDS`, opens more connections until it reaches 10k total, and repeats until the final target. Connections stay open between stages.
 
 ## GitHub Workflow
 
@@ -164,7 +168,7 @@ npm run build --prefix web
 
 - Use dedicated bare metal for the measured server and a separate dedicated host for load generation.
 - Keep loadgen and server in the same Latitude site. Public IPv4 is the default because Latitude virtual networks require extra OS/VLAN setup; private networking can be added later if public-network variance becomes material.
-- Keep the request rate fixed across connection stages at first. This makes 1k/10k/50k/100k mostly measure accumulated connection/runtime overhead instead of mixing in more application work.
+- Keep the request rate fixed across connection stages at first. This makes 1k/10k/100k/1M mostly measure accumulated connection/runtime overhead instead of mixing in more application work.
 - Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, and open FDs over the staged timeline.
 - Install each language/runtime and implementation dependencies before the measured run. The runner does this during host preparation from each `bench.json` manifest.
 - Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains all configured connection targets.

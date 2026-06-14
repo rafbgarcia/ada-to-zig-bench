@@ -3,6 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+port_range_csv() {
+  local start="$1"
+  local count="$2"
+  local ports=()
+  local index
+
+  for (( index = 0; index < count; index++ )); do
+    ports+=("$((start + index))")
+  done
+
+  local IFS=,
+  printf '%s' "${ports[*]}"
+}
+
 LATITUDE_PROJECT="${LATITUDE_PROJECT:-${LSH_PROJECT:-default-project}}"
 LATITUDE_SITE="${LATITUDE_SITE:-ASH}"
 LATITUDE_SERVER_PLAN="${LATITUDE_SERVER_PLAN:-f4-metal-small}"
@@ -17,16 +31,17 @@ SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
 SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
-BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000 10000 50000 100000}"
+BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000 10000 100000 1000000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-10000}"
-TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-10000}"
+TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-10}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-10}"
 STABILIZE_SECONDS="${STABILIZE_SECONDS:-10}"
 TRAFFIC_SECONDS="${TRAFFIC_SECONDS:-20}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-20}"
-REMOTE_PORTS="${REMOTE_PORTS:-8080,8081,8082,8083}"
+DEFAULT_REMOTE_PORTS="$(port_range_csv 8080 32)"
+REMOTE_PORTS="${REMOTE_PORTS:-$DEFAULT_REMOTE_PORTS}"
 SSH_USER="${SSH_USER:-}"
 if [[ -z "$SSH_USER" ]]; then
   case "$LATITUDE_OPERATING_SYSTEM" in
@@ -67,10 +82,11 @@ Environment:
   SSH_READY_TIMEOUT_SECONDS   default: 600
   SSH_CONNECT_TIMEOUT_SECONDS default: 5
   SERVER_NAMES                optional space-separated servers; auto-detected by default
-  BENCHMARK_CONNECTIONS       default: "1000 10000 50000 100000" cumulative connection targets
+  BENCHMARK_CONNECTIONS       default: "1000 10000 100000 1000000" cumulative connection targets
   PAYLOAD_BYTES               default: 256
   REQUESTS_PER_SECOND         default: 10000
-  TARGET_CONNECTION_RATE      default: 10000
+  TARGET_CONNECTION_RATE      default: 50000
+  REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
   TRAFFIC_SECONDS             default: 20 per connection target
   STABILIZE_SECONDS           default: 10 after each traffic stage
   LATITUDE_KEEP_INFRA         set to 1 to keep bare metal hosts after the run
@@ -186,6 +202,8 @@ main() {
   for connections in "${SCENARIO_CONNECTIONS[@]}"; do
     [[ "$connections" =~ ^[0-9]+$ ]] || fail "invalid connection count: $connections"
   done
+  normalize_remote_ports
+  validate_remote_port_fanout
   [[ "$LATITUDE_PROVISION_ATTEMPTS" =~ ^[0-9]+$ ]] || fail "invalid Latitude provision attempt count: $LATITUDE_PROVISION_ATTEMPTS"
   (( LATITUDE_PROVISION_ATTEMPTS > 0 )) || fail "LATITUDE_PROVISION_ATTEMPTS must be greater than zero"
   [[ "$SSH_READY_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || fail "invalid SSH readiness timeout: $SSH_READY_TIMEOUT_SECONDS"
@@ -195,6 +213,7 @@ main() {
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
   log "connection targets: ${SCENARIO_CONNECTIONS[*]}; target request rate: ${REQUESTS_PER_SECOND}/s"
+  log "server target ports: $REMOTE_PORTS"
 
   create_infrastructure
   prepare_hosts
@@ -227,6 +246,56 @@ scenario_json() {
 connection_targets_csv() {
   local IFS=,
   printf '%s' "${SCENARIO_CONNECTIONS[*]}"
+}
+
+normalize_remote_ports() {
+  local port raw_ports normalized_ports seen
+
+  IFS=',' read -r -a raw_ports <<<"$REMOTE_PORTS"
+  normalized_ports=()
+  for port in "${raw_ports[@]}"; do
+    port="${port//[[:space:]]/}"
+    [[ -n "$port" ]] || continue
+    [[ "$port" =~ ^[0-9]+$ ]] || fail "invalid REMOTE_PORTS entry: $port"
+    (( port > 0 && port < 65536 )) || fail "REMOTE_PORTS entry out of range: $port"
+    seen=0
+    for existing in "${normalized_ports[@]}"; do
+      if [[ "$existing" == "$port" ]]; then
+        seen=1
+        break
+      fi
+    done
+    (( seen == 1 )) && continue
+    normalized_ports+=("$port")
+  done
+
+  (( ${#normalized_ports[@]} > 0 )) || fail "REMOTE_PORTS must contain at least one port"
+  local IFS=,
+  REMOTE_PORTS="${normalized_ports[*]}"
+}
+
+validate_remote_port_fanout() {
+  local raw_ports max_connections remote_port_count recommended_capacity
+
+  IFS=',' read -r -a raw_ports <<<"$REMOTE_PORTS"
+  remote_port_count="${#raw_ports[@]}"
+  max_connections="${SCENARIO_CONNECTIONS[$((${#SCENARIO_CONNECTIONS[@]} - 1))]}"
+  recommended_capacity=$((remote_port_count * 32000))
+
+  if (( max_connections > recommended_capacity )); then
+    fail "REMOTE_PORTS has $remote_port_count port(s), which is too little fanout for $max_connections back-to-back connections from one loadgen IPv4; add target ports or loadgen source IPs"
+  fi
+}
+
+required_nofile() {
+  local max_connections minimum
+  max_connections="${SCENARIO_CONNECTIONS[$((${#SCENARIO_CONNECTIONS[@]} - 1))]}"
+  minimum=2097152
+  if (( max_connections + 65536 > minimum )); then
+    printf '%s\n' "$((max_connections + 65536))"
+  else
+    printf '%s\n' "$minimum"
+  fi
 }
 
 create_infrastructure() {
@@ -656,19 +725,26 @@ prepare_hosts() {
 upload_and_prepare_server() {
   local ip="$1"
   local archive="$2"
+  local bench_nofile
+  bench_nofile="$(required_nofile)"
   log "preparing server host $ip"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command) -- $bench_nofile" <<'REMOTE'
 set -euo pipefail
+BENCH_NOFILE="$1"
 BENCH_USER="${SUDO_USER:-${USER:-root}}"
-ulimit -n 1048576 || true
-cat >/etc/security/limits.d/99-bench.conf <<'LIMITS'
-* soft nofile 1048576
-* hard nofile 1048576
-root soft nofile 1048576
-root hard nofile 1048576
-LIMITS
-sysctl -w fs.file-max=2097152 net.core.somaxconn=65535 net.ipv4.ip_local_port_range="1024 65535" net.ipv4.tcp_tw_reuse=1 >/dev/null || true
+sysctl -w fs.nr_open="$BENCH_NOFILE" >/dev/null
+sysctl -w fs.file-max="$((BENCH_NOFILE * 2))" >/dev/null
+sysctl -w net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.ip_local_port_range="1024 65535" >/dev/null
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null || true
+sysctl -w net.ipv4.tcp_max_tw_buckets="$((BENCH_NOFILE * 2))" >/dev/null || true
+ulimit -n "$BENCH_NOFILE"
+{
+  printf '* soft nofile %s\n' "$BENCH_NOFILE"
+  printf '* hard nofile %s\n' "$BENCH_NOFILE"
+  printf 'root soft nofile %s\n' "$BENCH_NOFILE"
+  printf 'root hard nofile %s\n' "$BENCH_NOFILE"
+} >/etc/security/limits.d/99-bench.conf
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
@@ -695,19 +771,26 @@ REMOTE
 upload_and_prepare_loadgen() {
   local ip="$1"
   local archive="$2"
+  local bench_nofile
+  bench_nofile="$(required_nofile)"
   log "preparing loadgen host $ip"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command) -- $bench_nofile" <<'REMOTE'
 set -euo pipefail
+BENCH_NOFILE="$1"
 BENCH_USER="${SUDO_USER:-${USER:-root}}"
-ulimit -n 1048576 || true
-cat >/etc/security/limits.d/99-bench.conf <<'LIMITS'
-* soft nofile 1048576
-* hard nofile 1048576
-root soft nofile 1048576
-root hard nofile 1048576
-LIMITS
-sysctl -w fs.file-max=2097152 net.core.somaxconn=65535 net.ipv4.ip_local_port_range="1024 65535" net.ipv4.tcp_tw_reuse=1 >/dev/null || true
+sysctl -w fs.nr_open="$BENCH_NOFILE" >/dev/null
+sysctl -w fs.file-max="$((BENCH_NOFILE * 2))" >/dev/null
+sysctl -w net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.ip_local_port_range="1024 65535" >/dev/null
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null || true
+sysctl -w net.ipv4.tcp_max_tw_buckets="$((BENCH_NOFILE * 2))" >/dev/null || true
+ulimit -n "$BENCH_NOFILE"
+{
+  printf '* soft nofile %s\n' "$BENCH_NOFILE"
+  printf '* hard nofile %s\n' "$BENCH_NOFILE"
+  printf 'root soft nofile %s\n' "$BENCH_NOFILE"
+  printf 'root hard nofile %s\n' "$BENCH_NOFILE"
+} >/etc/security/limits.d/99-bench.conf
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
@@ -767,13 +850,16 @@ run_server_suite() {
 remote_server_start() {
   local server="$1"
   local local_work_dir="$2"
+  local bench_nofile
+  bench_nofile="$(required_nofile)"
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$SERVER_IPV4" \
+    BENCH_NOFILE="$bench_nofile" \
     SERVER_NAME="$server" \
     HOST="0.0.0.0" \
     PORTS="$REMOTE_PORTS" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
-ulimit -n 1048576 || true
+ulimit -n "$BENCH_NOFILE"
 export PATH="/usr/local/go/bin:/opt/bun/bin:$PATH"
 export BUN_INSTALL="/opt/bun"
 cd /opt/bench
@@ -830,9 +916,12 @@ fetch_server_artifacts() {
 run_loadgen() {
   local connection_targets="${SCENARIO_CONNECTIONS[*]}"
   local remote_connection_targets
+  local bench_nofile
   remote_connection_targets="$(connection_targets_csv)"
+  bench_nofile="$(required_nofile)"
   log "running staged connection load from loadgen host: $connection_targets"
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
+    BENCH_NOFILE="$bench_nofile" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
     CONNECTION_TARGETS="$remote_connection_targets" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
@@ -846,7 +935,7 @@ run_loadgen() {
     PORTS="$REMOTE_PORTS" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
-ulimit -n 1048576 || true
+ulimit -n "$BENCH_NOFILE"
 cd /opt/bench
 OUT="/opt/bench/.tmp/loadgen"
 rm -rf "$OUT"
@@ -940,7 +1029,7 @@ const metadata = {
     primary_metrics: ['active_connections', 'requests_started_per_second', 'responses_completed_per_second', 'rss_mb', 'cpu_percent', 'threads', 'open_fds'],
     notes: [
       'Load generation is isolated from the measured server host.',
-      'Connections are distributed over multiple server ports to avoid client ephemeral-port exhaustion at 100k connections.',
+      'Connections are distributed over multiple server ports to avoid client ephemeral-port exhaustion at 1M connections.',
       'Connection targets are cumulative inside one continuous run so resource growth can be correlated with server activity.',
     ],
   },
