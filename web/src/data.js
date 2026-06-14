@@ -55,14 +55,15 @@ export const metricGroups = [
   },
   {
     id: 'errors',
-    title: 'Errors And Statuses',
-    description: 'Server-side request errors and non-2xx responses, with loadgen-observed failures for diagnosis.',
+    title: 'Errors And Saturation',
+    description: 'Server-side request errors, non-2xx responses, loadgen failures, and missed dispatch capacity.',
     unit: '/s',
     series: [
       { key: 'serverErrorsPerSecond', label: 'Server errors', color: '#dc2626', unit: '/s' },
       { key: 'responses4xxPerSecond', label: '4xx responses', color: '#f59e0b', unit: '/s' },
       { key: 'responses5xxPerSecond', label: '5xx responses', color: '#991b1b', unit: '/s' },
-      { key: 'loadgenErrorsPerSecond', label: 'Loadgen errors', color: '#475467', unit: '/s' },
+      { key: 'loadgenErrorsPerSecond', label: 'Loadgen failures', color: '#475467', unit: '/s' },
+      { key: 'dispatchMissesPerSecond', label: 'Dispatch misses', color: '#7c3aed', unit: '/s' },
     ],
   },
   {
@@ -251,6 +252,7 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       responses5xxPerSecond: numberValue(activity.responses_5xx_per_second),
       serverErrorsPerSecond: numberValue(activity.request_errors_per_second),
       loadgenErrorsPerSecond: numberValue(loadgen.errors_per_second),
+      dispatchMissesPerSecond: numberValue(loadgen.dispatch_misses_per_second),
       loadgenSentPerSecond: numberValue(loadgen.sent_per_second),
       loadgenReceivedPerSecond: numberValue(loadgen.received_per_second),
       p50LatencyMs: numberValue(loadgen.p50_latency_ms),

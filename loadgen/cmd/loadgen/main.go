@@ -36,23 +36,25 @@ type responseMessage struct {
 }
 
 type metricSample struct {
-	Timestamp         string  `json:"ts"`
-	ElapsedSeconds    int64   `json:"elapsed_seconds"`
-	Phase             string  `json:"phase"`
-	StageIndex        int     `json:"stage_index"`
-	TargetConns       int     `json:"target_connections"`
-	TargetRPS         int     `json:"target_requests_per_second"`
-	ActiveConns       int64   `json:"active_connections"`
-	Sent              uint64  `json:"sent"`
-	Received          uint64  `json:"received"`
-	Errors            uint64  `json:"errors"`
-	SentPerSecond     uint64  `json:"sent_per_second"`
-	ReceivedPerSecond uint64  `json:"received_per_second"`
-	ErrorsPerSecond   uint64  `json:"errors_per_second"`
-	P50LatencyMS      float64 `json:"p50_latency_ms"`
-	P90LatencyMS      float64 `json:"p90_latency_ms"`
-	P99LatencyMS      float64 `json:"p99_latency_ms"`
-	MaxLatencyMS      float64 `json:"max_latency_ms"`
+	Timestamp               string  `json:"ts"`
+	ElapsedSeconds          int64   `json:"elapsed_seconds"`
+	Phase                   string  `json:"phase"`
+	StageIndex              int     `json:"stage_index"`
+	TargetConns             int     `json:"target_connections"`
+	TargetRPS               int     `json:"target_requests_per_second"`
+	ActiveConns             int64   `json:"active_connections"`
+	Sent                    uint64  `json:"sent"`
+	Received                uint64  `json:"received"`
+	Errors                  uint64  `json:"errors"`
+	DispatchMisses          uint64  `json:"dispatch_misses"`
+	SentPerSecond           uint64  `json:"sent_per_second"`
+	ReceivedPerSecond       uint64  `json:"received_per_second"`
+	ErrorsPerSecond         uint64  `json:"errors_per_second"`
+	DispatchMissesPerSecond uint64  `json:"dispatch_misses_per_second"`
+	P50LatencyMS            float64 `json:"p50_latency_ms"`
+	P90LatencyMS            float64 `json:"p90_latency_ms"`
+	P99LatencyMS            float64 `json:"p99_latency_ms"`
+	MaxLatencyMS            float64 `json:"max_latency_ms"`
 }
 
 type summary struct {
@@ -74,6 +76,7 @@ type summary struct {
 	TotalSent               uint64         `json:"total_sent"`
 	TotalReceived           uint64         `json:"total_received"`
 	TotalErrors             uint64         `json:"total_errors"`
+	TotalDispatchMisses     uint64         `json:"total_dispatch_misses"`
 	PeakActiveConnections   int64          `json:"peak_active_connections"`
 	Success                 bool           `json:"success"`
 	P50LatencyMS            float64        `json:"p50_latency_ms"`
@@ -98,6 +101,7 @@ type stageSummary struct {
 	Sent                    uint64  `json:"sent"`
 	Received                uint64  `json:"received"`
 	Errors                  uint64  `json:"errors"`
+	DispatchMisses          uint64  `json:"dispatch_misses"`
 	P50LatencyMS            float64 `json:"p50_latency_ms"`
 	P90LatencyMS            float64 `json:"p90_latency_ms"`
 	P99LatencyMS            float64 `json:"p99_latency_ms"`
@@ -124,6 +128,7 @@ type clientConn struct {
 	sent     *atomic.Uint64
 	received *atomic.Uint64
 	errors   *atomic.Uint64
+	inFlight atomic.Bool
 	latency  chan<- latencySample
 	register chan<- *clientConn
 	marker   *atomic.Value
@@ -248,6 +253,7 @@ func main() {
 	var sent atomic.Uint64
 	var received atomic.Uint64
 	var errorsCount atomic.Uint64
+	var dispatchMisses atomic.Uint64
 	var requestID atomic.Uint64
 
 	latencyCh := make(chan latencySample, 1_000_000)
@@ -273,7 +279,7 @@ func main() {
 	metricsWG.Add(1)
 	go func() {
 		defer metricsWG.Done()
-		sampleMetrics(runCtx, startedAt, &marker, metricsFile, &active, &sent, &received, &errorsCount, latencyCh, func(values []latencySample) {
+		sampleMetrics(runCtx, startedAt, &marker, metricsFile, &active, &sent, &received, &errorsCount, &dispatchMisses, latencyCh, func(values []latencySample) {
 			allLatenciesMu.Lock()
 			for _, value := range values {
 				allLatencies = append(allLatencies, value.ms)
@@ -296,6 +302,7 @@ func main() {
 		stageSentStart := sent.Load()
 		stageReceivedStart := received.Load()
 		stageErrorsStart := errorsCount.Load()
+		stageDispatchMissesStart := dispatchMisses.Load()
 		allLatenciesMu.Lock()
 		stageLatencyStart := len(allLatencies)
 		allLatenciesMu.Unlock()
@@ -314,7 +321,7 @@ func main() {
 		trafficStartedAt := time.Now().UTC()
 		trafficFinishedAt := trafficStartedAt.Add(time.Duration(trafficSeconds) * time.Second)
 		if runCtx.Err() == nil {
-			sendRequests(runCtx, trafficStartedAt, trafficFinishedAt, requestsPerSecond, index, &requestID, &errorsCount, &activeMu, &activeConns, &marker, errorLog)
+			sendRequests(runCtx, trafficStartedAt, trafficFinishedAt, requestsPerSecond, index, &requestID, &errorsCount, &dispatchMisses, &activeMu, &activeConns, &marker, errorLog)
 		}
 		trafficEndedAt := time.Now().UTC()
 
@@ -342,6 +349,7 @@ func main() {
 			Sent:                    sent.Load() - stageSentStart,
 			Received:                received.Load() - stageReceivedStart,
 			Errors:                  errorsCount.Load() - stageErrorsStart,
+			DispatchMisses:          dispatchMisses.Load() - stageDispatchMissesStart,
 			P50LatencyMS:            percentile(stageLatencies, 50),
 			P90LatencyMS:            percentile(stageLatencies, 90),
 			P99LatencyMS:            percentile(stageLatencies, 99),
@@ -390,6 +398,7 @@ func main() {
 		TotalSent:               sent.Load(),
 		TotalReceived:           received.Load(),
 		TotalErrors:             errorsCount.Load(),
+		TotalDispatchMisses:     dispatchMisses.Load(),
 		PeakActiveConnections:   peak.Load(),
 		Success:                 peak.Load() >= int64(maxConnections),
 		P50LatencyMS:            overallP50,
@@ -443,11 +452,15 @@ func (c *clientConn) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case request := <-c.sendCh:
-			if err := c.send(request); err != nil {
+			err := c.send(request)
+			if err != nil {
+				c.dead.Store(true)
+				c.inFlight.Store(false)
 				c.errors.Add(1)
 				c.logError("request", request.id, err)
 				return
 			}
+			c.inFlight.Store(false)
 		}
 	}
 }
@@ -695,7 +708,7 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 	}
 }
 
-func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsPerSecond int, stageIndex int, requestID *atomic.Uint64, errorsCount *atomic.Uint64, activeMu *sync.Mutex, activeConns *[]*clientConn, marker *atomic.Value, errorLog *errorLogger) {
+func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsPerSecond int, stageIndex int, requestID *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64, activeMu *sync.Mutex, activeConns *[]*clientConn, marker *atomic.Value, errorLog *errorLogger) {
 	if requestsPerSecond <= 0 {
 		waitUntil(ctx, end)
 		return
@@ -719,11 +732,16 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 				logDispatchError(errorLog, marker, "dispatch", 0, errors.New("no active connections"))
 				continue
 			}
-			conn := (*activeConns)[nextConn%len(*activeConns)]
-			nextConn++
+
+			conn := nextIdleConn(*activeConns, &nextConn)
 			activeMu.Unlock()
+			if conn == nil {
+				dispatchMisses.Add(1)
+				continue
+			}
 
 			if conn.dead.Load() {
+				conn.inFlight.Store(false)
 				errorsCount.Add(1)
 				logDispatchError(errorLog, marker, "dispatch", 0, fmt.Errorf("connection %d is closed", conn.id))
 				continue
@@ -733,8 +751,8 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 			select {
 			case conn.sendCh <- requestDispatch{id: id, stageIndex: stageIndex}:
 			default:
-				errorsCount.Add(1)
-				logDispatchError(errorLog, marker, "dispatch", id, fmt.Errorf("connection %d is busy", conn.id))
+				conn.inFlight.Store(false)
+				dispatchMisses.Add(1)
 			}
 		}
 	}
@@ -746,6 +764,25 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 
 		dispatch()
 	}
+}
+
+func nextIdleConn(conns []*clientConn, nextConn *int) *clientConn {
+	if len(conns) == 0 {
+		return nil
+	}
+
+	for attempts := 0; attempts < len(conns); attempts++ {
+		conn := conns[*nextConn%len(conns)]
+		*nextConn++
+		if conn.dead.Load() {
+			continue
+		}
+		if conn.inFlight.CompareAndSwap(false, true) {
+			return conn
+		}
+	}
+
+	return nil
 }
 
 func logDispatchError(errorLog *errorLogger, marker *atomic.Value, operation string, requestID uint64, err error) {
@@ -766,7 +803,7 @@ func logDispatchError(errorLog *errorLogger, marker *atomic.Value, operation str
 	})
 }
 
-func sampleMetrics(ctx context.Context, startedAt time.Time, marker *atomic.Value, file *os.File, active *atomic.Int64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, latencyCh <-chan latencySample, recordLatencies func([]latencySample)) {
+func sampleMetrics(ctx context.Context, startedAt time.Time, marker *atomic.Value, file *os.File, active *atomic.Int64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64, latencyCh <-chan latencySample, recordLatencies func([]latencySample)) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -774,20 +811,21 @@ func sampleMetrics(ctx context.Context, startedAt time.Time, marker *atomic.Valu
 	var lastSent uint64
 	var lastReceived uint64
 	var lastErrors uint64
-	drainAndWriteSample(time.Now().UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, &lastSent, &lastReceived, &lastErrors, latencyCh, recordLatencies)
+	var lastDispatchMisses uint64
+	drainAndWriteSample(time.Now().UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, dispatchMisses, &lastSent, &lastReceived, &lastErrors, &lastDispatchMisses, latencyCh, recordLatencies)
 
 	for {
 		select {
 		case <-ctx.Done():
-			drainAndWriteSample(time.Now().UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, &lastSent, &lastReceived, &lastErrors, latencyCh, recordLatencies)
+			drainAndWriteSample(time.Now().UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, dispatchMisses, &lastSent, &lastReceived, &lastErrors, &lastDispatchMisses, latencyCh, recordLatencies)
 			return
 		case now := <-ticker.C:
-			drainAndWriteSample(now.UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, &lastSent, &lastReceived, &lastErrors, latencyCh, recordLatencies)
+			drainAndWriteSample(now.UTC(), startedAt, currentMarker(marker), encoder, active, sent, received, errorsCount, dispatchMisses, &lastSent, &lastReceived, &lastErrors, &lastDispatchMisses, latencyCh, recordLatencies)
 		}
 	}
 }
 
-func drainAndWriteSample(now time.Time, startedAt time.Time, marker runMarker, encoder *json.Encoder, active *atomic.Int64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, lastSent *uint64, lastReceived *uint64, lastErrors *uint64, latencyCh <-chan latencySample, recordLatencies func([]latencySample)) {
+func drainAndWriteSample(now time.Time, startedAt time.Time, marker runMarker, encoder *json.Encoder, active *atomic.Int64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64, lastSent *uint64, lastReceived *uint64, lastErrors *uint64, lastDispatchMisses *uint64, latencyCh <-chan latencySample, recordLatencies func([]latencySample)) {
 	latencies := make([]latencySample, 0, 4096)
 	for {
 		select {
@@ -801,31 +839,35 @@ func drainAndWriteSample(now time.Time, startedAt time.Time, marker runMarker, e
 			currentSent := sent.Load()
 			currentReceived := received.Load()
 			currentErrors := errorsCount.Load()
+			currentDispatchMisses := dispatchMisses.Load()
 
 			sample := metricSample{
-				Timestamp:         now.Format(time.RFC3339),
-				ElapsedSeconds:    int64(now.Sub(startedAt).Seconds()),
-				Phase:             marker.Phase,
-				StageIndex:        marker.StageIndex,
-				TargetConns:       marker.TargetConns,
-				TargetRPS:         marker.TargetRPS,
-				ActiveConns:       active.Load(),
-				Sent:              currentSent,
-				Received:          currentReceived,
-				Errors:            currentErrors,
-				SentPerSecond:     currentSent - *lastSent,
-				ReceivedPerSecond: currentReceived - *lastReceived,
-				ErrorsPerSecond:   currentErrors - *lastErrors,
-				P50LatencyMS:      percentile(latencyValues(latencies), 50),
-				P90LatencyMS:      percentile(latencyValues(latencies), 90),
-				P99LatencyMS:      percentile(latencyValues(latencies), 99),
-				MaxLatencyMS:      percentile(latencyValues(latencies), 100),
+				Timestamp:               now.Format(time.RFC3339),
+				ElapsedSeconds:          int64(now.Sub(startedAt).Seconds()),
+				Phase:                   marker.Phase,
+				StageIndex:              marker.StageIndex,
+				TargetConns:             marker.TargetConns,
+				TargetRPS:               marker.TargetRPS,
+				ActiveConns:             active.Load(),
+				Sent:                    currentSent,
+				Received:                currentReceived,
+				Errors:                  currentErrors,
+				DispatchMisses:          currentDispatchMisses,
+				SentPerSecond:           currentSent - *lastSent,
+				ReceivedPerSecond:       currentReceived - *lastReceived,
+				ErrorsPerSecond:         currentErrors - *lastErrors,
+				DispatchMissesPerSecond: currentDispatchMisses - *lastDispatchMisses,
+				P50LatencyMS:            percentile(latencyValues(latencies), 50),
+				P90LatencyMS:            percentile(latencyValues(latencies), 90),
+				P99LatencyMS:            percentile(latencyValues(latencies), 99),
+				MaxLatencyMS:            percentile(latencyValues(latencies), 100),
 			}
 
 			_ = encoder.Encode(sample)
 			*lastSent = currentSent
 			*lastReceived = currentReceived
 			*lastErrors = currentErrors
+			*lastDispatchMisses = currentDispatchMisses
 			return
 		}
 	}
