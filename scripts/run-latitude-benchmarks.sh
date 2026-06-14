@@ -719,7 +719,7 @@ tar -C /usr/local -xzf /tmp/go.tar.gz
 export PATH="/usr/local/go/bin:$PATH"
 cd /opt/bench
 mkdir -p /opt/bench/.tmp
-go build -o /opt/bench/.tmp/loadgen ./loadgen/cmd/loadgen
+go build -o /opt/bench/.tmp/loadgen-bin ./loadgen/cmd/loadgen
 chown -R "$BENCH_USER" /opt/bench
 REMOTE
 }
@@ -851,6 +851,7 @@ cd /opt/bench
 OUT="/opt/bench/.tmp/loadgen"
 rm -rf "$OUT"
 mkdir -p "$OUT"
+test -x /opt/bench/.tmp/loadgen-bin
 URLS=""
 IFS=',' read -r -a ports <<<"$PORTS"
 for port in "${ports[@]}"; do
@@ -859,7 +860,7 @@ for port in "${ports[@]}"; do
   if [[ -n "$URLS" ]]; then URLS+=","; fi
   URLS+="http://$SERVER_PUBLIC_IP:$port/json"
 done
-/opt/bench/.tmp/loadgen \
+/opt/bench/.tmp/loadgen-bin \
   --urls "$URLS" \
   --connection-targets "$CONNECTION_TARGETS" \
   --payload-bytes "$PAYLOAD_BYTES" \
