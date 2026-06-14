@@ -244,8 +244,11 @@ benchmark_complete() {
     --argjson expectedSweep "$(payload_sweep_json)" \
     --argjson expectedSweepSeconds "$PAYLOAD_SWEEP_SECONDS" '
     (.connection_targets // .scenarios // []) as $actual
+    | (($expected | max) // 0) as $maxExpected
     | ($actual | type) == "array"
     and (($actual | map(if type == "object" then .target_connections // .connections else . end) | sort) == ($expected | sort))
+    and ((.success // false) == true)
+    and ((.peak_active_connections // 0) >= $maxExpected)
     and ((.payload_bytes // -1) == $expectedPayloadBytes)
     and ((.target_requests_per_second // .target_messages_per_second // -1) == $expectedTargetRPS)
     and (((.payload_sweep_bytes // []) | sort) == ($expectedSweep | sort))

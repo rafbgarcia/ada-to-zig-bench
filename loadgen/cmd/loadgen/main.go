@@ -765,6 +765,8 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 	perTick := float64(targetConnectionRate) * tickInterval.Seconds()
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
+	stallTimeout := 30 * time.Second
+	var launchedAllAt time.Time
 
 	launchBatch := func() {
 		carry += perTick
@@ -807,6 +809,15 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 		case <-ticker.C:
 			if opened < targetConnections {
 				launchBatch()
+				if opened >= targetConnections {
+					launchedAllAt = time.Now()
+				}
+			} else if launchedAllAt.IsZero() {
+				launchedAllAt = time.Now()
+			} else if time.Since(launchedAllAt) >= stallTimeout {
+				activeNow := active.Load()
+				logDispatchError(errorLog, marker, "ramp", 0, fmt.Errorf("connection ramp stalled at %d/%d active connections after launching %d attempts", activeNow, targetConnections, opened))
+				return
 			}
 		}
 	}
