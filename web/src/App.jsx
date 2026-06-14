@@ -246,6 +246,7 @@ function Sidebar({
 
 function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, showRuntimeEvents }) {
   const meta = loaded?.metadata ?? run.metadata ?? {};
+  const status = runStatus(loaded);
   const runtimeMarkers = useMemo(
     () => (loaded ? significantRuntimeEvents(loaded.runtimeEvents) : []),
     [loaded],
@@ -261,6 +262,7 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
             <small>{meta.runtime ?? meta.language ?? 'runtime'}</small>
           </div>
         </div>
+        {status ? <RunStatusBadge status={status} /> : null}
         {/* <dl className="column-meta">
           <div>
             <dt>Target RPS</dt>
@@ -288,6 +290,7 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
           <div className="column-state"><Loader2 size={16} className="spin" /> Loading run…</div>
         ) : (
           <>
+            {status?.kind === 'failed' || status?.kind === 'target-miss' ? <RunFailureSummary loaded={loaded} status={status} /> : null}
             <div className="column-charts">
               {groups.map((group) => (
                 <MetricChart
@@ -305,6 +308,42 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
       </div>
     </section>
   );
+}
+
+function RunStatusBadge({ status }) {
+  return <span className={`run-status run-status-${status.kind}`}>{status.label}</span>;
+}
+
+function RunFailureSummary({ loaded, status }) {
+  const summary = loaded.summary ?? {};
+  const failedStage = (summary.stages ?? []).find((stage) => stage.ramp_reached_target === false || stage.phase === 'ramp_failed');
+  const details = [
+    failedStage?.failure_reason,
+    summary.peak_active_connections != null && summary.connections != null
+      ? `${formatCompact(summary.peak_active_connections)} / ${formatCompact(summary.connections)} connections`
+      : null,
+    summary.total_connection_retries ? `${formatCompact(summary.total_connection_retries)} retries` : null,
+    summary.total_connection_failures ? `${formatCompact(summary.total_connection_failures)} failed slots` : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="run-failure" role="status">
+      <AlertTriangle size={15} />
+      <span>{details.length > 0 ? details.join(' · ') : status.label}</span>
+    </div>
+  );
+}
+
+function runStatus(loaded) {
+  if (!loaded?.summary) return null;
+  const summary = loaded.summary;
+  if (summary.success === true) return { kind: 'success', label: 'Complete' };
+  const failedStage = (summary.stages ?? []).find((stage) => stage.ramp_reached_target === false || stage.phase === 'ramp_failed');
+  if (failedStage || (summary.peak_active_connections ?? 0) < (summary.connections ?? 0)) {
+    return { kind: 'target-miss', label: 'Target miss' };
+  }
+  if (summary.complete === false) return { kind: 'failed', label: 'Incomplete' };
+  return { kind: 'failed', label: 'Failed' };
 }
 
 function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers }) {

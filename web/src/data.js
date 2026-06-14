@@ -74,7 +74,13 @@ export const metricGroups = [
       { key: 'responses4xxPerSecond', label: '4xx responses', color: '#f59e0b', unit: '/s' },
       { key: 'responses5xxPerSecond', label: '5xx responses', color: '#991b1b', unit: '/s' },
       { key: 'loadgenErrorsPerSecond', label: 'Loadgen failures', color: '#475467', unit: '/s' },
+      { key: 'connectionRetriesPerSecond', label: 'Connection retries', color: '#d97706', unit: '/s' },
+      { key: 'connectionFailuresPerSecond', label: 'Connection failures', color: '#be123c', unit: '/s' },
       { key: 'dispatchMissesPerSecond', label: 'Dispatch misses', color: '#7c3aed', unit: '/s' },
+      { key: 'tcpListenDropsDelta', label: 'Listen drops', color: '#b45309', unit: '/s' },
+      { key: 'tcpListenOverflowsDelta', label: 'Listen overflows', color: '#9f1239', unit: '/s' },
+      { key: 'tcpBacklogDropDelta', label: 'Backlog drops', color: '#a16207', unit: '/s' },
+      { key: 'tcpReqQFullDropDelta', label: 'Full queue drops', color: '#881337', unit: '/s' },
     ],
   },
   {
@@ -98,6 +104,7 @@ export const phaseColors = {
   settle: '#dcfce7',
   traffic: '#ffedd5',
   stabilize: '#ede9fe',
+  ramp_failed: '#fee2e2',
   payload_sweep: '#ccfbf1',
   cooldown: '#f2f4f7',
   unknown: '#f8fafc',
@@ -121,6 +128,7 @@ export async function loadRun(runID) {
   ]);
 
   const serverMetrics = parseJSONL(serverRaw);
+  const serverMetricsWithRates = withDerivedServerRates(serverMetrics);
   const activityMetrics = withDerivedActivityRates(parseJSONL(activityRaw));
   const loadgenMetrics = parseJSONL(loadgenRaw);
   const runtimeMetrics = parseJSONL(runtimeRaw).map((sample) => ({
@@ -132,14 +140,14 @@ export async function loadRun(runID) {
   const serverEvents = parseJSONL(serverEventsRaw);
   const loadgenErrors = parseJSONL(loadgenErrorsRaw);
 
-  const timelineStart = findTimelineStart(metadata, serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors);
-  for (const group of [serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors]) {
+  const timelineStart = findTimelineStart(metadata, serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors);
+  for (const group of [serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors]) {
     annotateTimelineSeconds(group, timelineStart);
   }
 
   const maxElapsed = Math.max(
     0,
-    ...serverMetrics.map((sample) => sample.timeline_seconds ?? 0),
+    ...serverMetricsWithRates.map((sample) => sample.timeline_seconds ?? 0),
     ...activityMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...loadgenMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...runtimeMetrics.map((sample) => sample.timeline_seconds ?? 0),
@@ -149,13 +157,13 @@ export async function loadRun(runID) {
   );
 
   const phases = buildPhaseRanges(loadgenMetrics, maxElapsed);
-  const timeline = buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtimeMetrics, maxElapsed });
+  const timeline = buildTimeline({ serverMetrics: serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, maxElapsed });
 
   return {
     runID,
     metadata,
     summary,
-    serverMetrics,
+    serverMetrics: serverMetricsWithRates,
     activityMetrics,
     loadgenMetrics,
     runtimeMetrics,
@@ -224,6 +232,25 @@ function withDerivedActivityRates(samples) {
   });
 }
 
+function withDerivedServerRates(samples) {
+  let previous = null;
+  return samples.map((sample) => {
+    const elapsed = Number(sample.elapsed_seconds ?? 0);
+    const deltaSeconds = previous ? Math.max(1, elapsed - Number(previous.elapsed_seconds ?? 0)) : 1;
+    const next = {
+      ...sample,
+      tcp_listen_overflows_per_second: delta(sample, previous, 'tcp_listen_overflows') / deltaSeconds,
+      tcp_listen_drops_per_second: delta(sample, previous, 'tcp_listen_drops') / deltaSeconds,
+      tcp_backlog_drop_per_second: delta(sample, previous, 'tcp_backlog_drop') / deltaSeconds,
+      tcp_req_q_full_drop_per_second: delta(sample, previous, 'tcp_req_q_full_drop') / deltaSeconds,
+      tcp_syncookies_sent_per_second: delta(sample, previous, 'tcp_syncookies_sent') / deltaSeconds,
+      tcp_syncookies_failed_per_second: delta(sample, previous, 'tcp_syncookies_failed') / deltaSeconds,
+    };
+    previous = sample;
+    return next;
+  });
+}
+
 function delta(sample, previous, key) {
   if (!previous) return 0;
   const current = Number(sample[key] ?? 0);
@@ -266,6 +293,9 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       serverErrorsPerSecond: numberValue(activity.request_errors_per_second),
       loadgenErrorsPerSecond: numberValue(loadgen.errors_per_second),
       dispatchMissesPerSecond: numberValue(loadgen.dispatch_misses_per_second),
+      connectionAttemptsPerSecond: numberValue(loadgen.connection_attempts_per_second),
+      connectionRetriesPerSecond: numberValue(loadgen.connection_retries_per_second),
+      connectionFailuresPerSecond: numberValue(loadgen.connection_failures_per_second),
       loadgenSentPerSecond: numberValue(loadgen.sent_per_second),
       loadgenReceivedPerSecond: numberValue(loadgen.received_per_second),
       p50LatencyMs: numberValue(loadgen.p50_latency_ms),
@@ -277,6 +307,12 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       threads: nullableNumber(server.threads),
       openFds: nullableNumber(server.open_fds),
       tcpEstablished: nullableNumber(server.tcp_established),
+      tcpListenDropsDelta: numberValue(server.tcp_listen_drops_per_second),
+      tcpListenOverflowsDelta: numberValue(server.tcp_listen_overflows_per_second),
+      tcpBacklogDropDelta: numberValue(server.tcp_backlog_drop_per_second),
+      tcpReqQFullDropDelta: numberValue(server.tcp_req_q_full_drop_per_second),
+      tcpSyncookiesSentDelta: numberValue(server.tcp_syncookies_sent_per_second),
+      tcpSyncookiesFailedDelta: numberValue(server.tcp_syncookies_failed_per_second),
       heapUsedMb: numberValue(runtime.heap_used_mb),
       heapTotalMb: numberValue(runtime.heap_total_mb),
     });

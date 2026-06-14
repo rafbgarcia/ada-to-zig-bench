@@ -10,6 +10,8 @@ PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
+CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
+CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-0}"
 STABILIZE_SECONDS="${STABILIZE_SECONDS:-0}"
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-0}"
@@ -126,6 +128,8 @@ PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
 PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
 REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
 TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
+CONNECTION_RETRIES="$CONNECTION_RETRIES" \
+CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
 BASELINE_SECONDS="$BASELINE_SECONDS" \
 SETTLE_SECONDS="$SETTLE_SECONDS" \
 STABILIZE_SECONDS="$STABILIZE_SECONDS" \
@@ -151,6 +155,8 @@ const metadata = {
   target_requests_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_messages_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_connection_rate: Number(process.env.TARGET_CONNECTION_RATE),
+  connection_retries: Number(process.env.CONNECTION_RETRIES),
+  connection_retry_delay: process.env.CONNECTION_RETRY_DELAY,
   baseline_seconds: Number(process.env.BASELINE_SECONDS),
   settle_seconds: Number(process.env.SETTLE_SECONDS),
   stabilize_seconds: Number(process.env.STABILIZE_SECONDS),
@@ -171,7 +177,6 @@ echo "starting $SERVER_NAME server"
     ACTIVITY_METRICS_PATH="$RUN_WORK_DIR/activity_metrics.jsonl" \
     SERVER_EVENTS_PATH="$RUN_WORK_DIR/server_events.jsonl" \
     RUNTIME_METRICS_PATH="$RUN_WORK_DIR/runtime_metrics.jsonl" \
-    RUNTIME_EVENTS_PATH="$RUN_WORK_DIR/runtime_events.jsonl" \
     bash -lc "$SERVER_COMMAND_DISPLAY"
 ) > "$RUN_WORK_DIR/server.log" 2>&1 &
 SERVER_PID="$!"
@@ -196,7 +201,7 @@ go build -o "$COLLECTOR_BIN" "$ROOT_DIR/collector/cmd/collector"
 ) > "$RUN_WORK_DIR/collector.log" 2>&1 &
 COLLECTOR_PID="$!"
 
-echo "running loadgen: ${BASELINE_SECONDS}s baseline, connection target(s) [$CONNECTION_TARGETS] at ${TARGET_CONNECTION_RATE} conn/s, ${SETTLE_SECONDS}s settle, ramping to ${REQUESTS_PER_SECOND} req/s over ${TRAFFIC_SECONDS}s, payload sweep [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each, ${STABILIZE_SECONDS}s stabilize, ${COOLDOWN_SECONDS}s cooldown"
+echo "running loadgen: ${BASELINE_SECONDS}s baseline, connection target(s) [$CONNECTION_TARGETS] at ${TARGET_CONNECTION_RATE} conn/s with ${CONNECTION_RETRIES} retries after ${CONNECTION_RETRY_DELAY}, ${SETTLE_SECONDS}s settle, ramping to ${REQUESTS_PER_SECOND} req/s over ${TRAFFIC_SECONDS}s, payload sweep [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each, ${STABILIZE_SECONDS}s stabilize, ${COOLDOWN_SECONDS}s cooldown"
 go build -o "$LOADGEN_BIN" "$ROOT_DIR/loadgen/cmd/loadgen"
 LOADGEN_STATUS=0
 set +e
@@ -209,6 +214,8 @@ set +e
     --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
     --requests-per-second "$REQUESTS_PER_SECOND" \
     --target-connection-rate "$TARGET_CONNECTION_RATE" \
+    --connection-retries "$CONNECTION_RETRIES" \
+    --connection-retry-delay "$CONNECTION_RETRY_DELAY" \
     --baseline-seconds "$BASELINE_SECONDS" \
     --settle-seconds "$SETTLE_SECONDS" \
     --stabilize-seconds "$STABILIZE_SECONDS" \

@@ -15,6 +15,15 @@
     "tcp_established": { "type": "integer" },
     "tcp_listen": { "type": "integer" },
     "tcp_close_wait": { "type": "integer" },
+    "tcp_listen_overflows": { "type": "integer", "minimum": 0 },
+    "tcp_listen_drops": { "type": "integer", "minimum": 0 },
+    "tcp_backlog_drop": { "type": "integer", "minimum": 0 },
+    "tcp_req_q_full_do_cookies": { "type": "integer", "minimum": 0 },
+    "tcp_req_q_full_drop": { "type": "integer", "minimum": 0 },
+    "tcp_syncookies_sent": { "type": "integer", "minimum": 0 },
+    "tcp_syncookies_recv": { "type": "integer", "minimum": 0 },
+    "tcp_syncookies_failed": { "type": "integer", "minimum": 0 },
+    "tcp_embryonic_rsts": { "type": "integer", "minimum": 0 },
     "error": { "type": "string" }
   }
 }

@@ -37,6 +37,8 @@ PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
+CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
+CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-0}"
 STABILIZE_SECONDS="${STABILIZE_SECONDS:-0}"
@@ -93,6 +95,8 @@ Environment:
   PAYLOAD_SWEEP_SECONDS       default: 5 per post-ramp payload size
   REQUESTS_PER_SECOND         default: 100000 final request rate
   TARGET_CONNECTION_RATE      default: 50000
+  CONNECTION_RETRIES          default: 3 failed connection dial/warmup retries
+  CONNECTION_RETRY_DELAY      default: 1s between connection retries
   REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
   TRAFFIC_SECONDS             default: 10 request-rate ramp seconds
   STABILIZE_SECONDS           default: 0 after traffic
@@ -924,7 +928,6 @@ mkdir -p .tmp/cloud-server
     ACTIVITY_METRICS_PATH="/opt/bench/.tmp/cloud-server/activity_metrics.jsonl" \
     SERVER_EVENTS_PATH="/opt/bench/.tmp/cloud-server/server_events.jsonl" \
     RUNTIME_METRICS_PATH="/opt/bench/.tmp/cloud-server/runtime_metrics.jsonl" \
-    RUNTIME_EVENTS_PATH="/opt/bench/.tmp/cloud-server/runtime_events.jsonl" \
     bash -lc "$run_command"
 ) > /opt/bench/.tmp/cloud-server/server.log 2>&1 &
 echo "$!" > /opt/bench/.tmp/cloud-server/server.pid
@@ -980,7 +983,7 @@ REMOTE
 
 fetch_server_artifacts() {
   local local_work_dir="$1"
-  for file in server_metrics.jsonl activity_metrics.jsonl server_events.jsonl runtime_metrics.jsonl runtime_events.jsonl server.log collector.log; do
+  for file in server_metrics.jsonl activity_metrics.jsonl server_events.jsonl runtime_metrics.jsonl server.log collector.log; do
     scp "${SSH_OPTS[@]}" "$SSH_USER@$SERVER_IPV4:/opt/bench/.tmp/cloud-server/$file" "$local_work_dir/$file" >/dev/null || true
   done
 }
@@ -998,6 +1001,8 @@ run_loadgen() {
     CONNECTION_TARGETS="$remote_connection_targets" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
     TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
+    CONNECTION_RETRIES="$CONNECTION_RETRIES" \
+    CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
     PAYLOAD_BYTES="$PAYLOAD_BYTES" \
     PAYLOAD_SWEEP_BYTES="$(payload_sweep_csv)" \
     PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
@@ -1031,6 +1036,8 @@ done
   --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
   --requests-per-second "$REQUESTS_PER_SECOND" \
   --target-connection-rate "$TARGET_CONNECTION_RATE" \
+  --connection-retries "$CONNECTION_RETRIES" \
+  --connection-retry-delay "$CONNECTION_RETRY_DELAY" \
   --baseline-seconds "$BASELINE_SECONDS" \
   --settle-seconds "$SETTLE_SECONDS" \
   --stabilize-seconds "$STABILIZE_SECONDS" \
@@ -1096,6 +1103,8 @@ const metadata = {
   target_requests_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_messages_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_connection_rate: summary.target_connection_rate ?? null,
+  connection_retries: summary.connection_retries ?? null,
+  connection_retry_delay_ms: summary.connection_retry_delay_ms ?? null,
   baseline_seconds: summary.baseline_seconds ?? null,
   settle_seconds: summary.settle_seconds ?? null,
   stabilize_seconds: summary.stabilize_seconds ?? null,

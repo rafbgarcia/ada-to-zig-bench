@@ -20,19 +20,28 @@ import (
 const clockTicksPerSecond = 100.0
 
 type sample struct {
-	Timestamp      string  `json:"ts"`
-	ElapsedSeconds int64   `json:"elapsed_seconds"`
-	PID            int     `json:"pid"`
-	CPUPercent     float64 `json:"cpu_percent"`
-	RSSBytes       uint64  `json:"rss_bytes"`
-	RSSMB          float64 `json:"rss_mb"`
-	Threads        *int    `json:"threads,omitempty"`
-	OpenFDs        *int    `json:"open_fds,omitempty"`
-	TCPSockets     *int    `json:"tcp_sockets,omitempty"`
-	TCPEstablished *int    `json:"tcp_established,omitempty"`
-	TCPListen      *int    `json:"tcp_listen,omitempty"`
-	TCPCloseWait   *int    `json:"tcp_close_wait,omitempty"`
-	Error          string  `json:"error,omitempty"`
+	Timestamp            string  `json:"ts"`
+	ElapsedSeconds       int64   `json:"elapsed_seconds"`
+	PID                  int     `json:"pid"`
+	CPUPercent           float64 `json:"cpu_percent"`
+	RSSBytes             uint64  `json:"rss_bytes"`
+	RSSMB                float64 `json:"rss_mb"`
+	Threads              *int    `json:"threads,omitempty"`
+	OpenFDs              *int    `json:"open_fds,omitempty"`
+	TCPSockets           *int    `json:"tcp_sockets,omitempty"`
+	TCPEstablished       *int    `json:"tcp_established,omitempty"`
+	TCPListen            *int    `json:"tcp_listen,omitempty"`
+	TCPCloseWait         *int    `json:"tcp_close_wait,omitempty"`
+	TCPListenOverflows   *uint64 `json:"tcp_listen_overflows,omitempty"`
+	TCPListenDrops       *uint64 `json:"tcp_listen_drops,omitempty"`
+	TCPBacklogDrop       *uint64 `json:"tcp_backlog_drop,omitempty"`
+	TCPReqQFullDoCookies *uint64 `json:"tcp_req_q_full_do_cookies,omitempty"`
+	TCPReqQFullDrop      *uint64 `json:"tcp_req_q_full_drop,omitempty"`
+	TCPSyncookiesSent    *uint64 `json:"tcp_syncookies_sent,omitempty"`
+	TCPSyncookiesRecv    *uint64 `json:"tcp_syncookies_recv,omitempty"`
+	TCPSyncookiesFailed  *uint64 `json:"tcp_syncookies_failed,omitempty"`
+	TCPEmbryonicRsts     *uint64 `json:"tcp_embryonic_rsts,omitempty"`
+	Error                string  `json:"error,omitempty"`
 }
 
 type linuxProcessSample struct {
@@ -45,6 +54,19 @@ type linuxProcessSample struct {
 	tcpEstablished *int
 	tcpListen      *int
 	tcpCloseWait   *int
+	tcpExt         tcpExtCounters
+}
+
+type tcpExtCounters struct {
+	ListenOverflows   *uint64
+	ListenDrops       *uint64
+	BacklogDrop       *uint64
+	ReqQFullDoCookies *uint64
+	ReqQFullDrop      *uint64
+	SyncookiesSent    *uint64
+	SyncookiesRecv    *uint64
+	SyncookiesFailed  *uint64
+	EmbryonicRsts     *uint64
 }
 
 type linuxCollector struct {
@@ -109,20 +131,29 @@ func main() {
 
 func writeSample(encoder *json.Encoder, pid int, startedAt time.Time, linux *linuxCollector) {
 	now := time.Now().UTC()
-	cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, err := readProcess(pid, linux)
+	cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, tcpExt, err := readProcess(pid, linux)
 	entry := sample{
-		Timestamp:      now.Format(time.RFC3339),
-		ElapsedSeconds: int64(now.Sub(startedAt).Seconds()),
-		PID:            pid,
-		CPUPercent:     cpu,
-		RSSBytes:       rssBytes,
-		RSSMB:          float64(rssBytes) / 1024 / 1024,
-		Threads:        threads,
-		OpenFDs:        openFDs,
-		TCPSockets:     tcpSockets,
-		TCPEstablished: tcpEstablished,
-		TCPListen:      tcpListen,
-		TCPCloseWait:   tcpCloseWait,
+		Timestamp:            now.Format(time.RFC3339),
+		ElapsedSeconds:       int64(now.Sub(startedAt).Seconds()),
+		PID:                  pid,
+		CPUPercent:           cpu,
+		RSSBytes:             rssBytes,
+		RSSMB:                float64(rssBytes) / 1024 / 1024,
+		Threads:              threads,
+		OpenFDs:              openFDs,
+		TCPSockets:           tcpSockets,
+		TCPEstablished:       tcpEstablished,
+		TCPListen:            tcpListen,
+		TCPCloseWait:         tcpCloseWait,
+		TCPListenOverflows:   tcpExt.ListenOverflows,
+		TCPListenDrops:       tcpExt.ListenDrops,
+		TCPBacklogDrop:       tcpExt.BacklogDrop,
+		TCPReqQFullDoCookies: tcpExt.ReqQFullDoCookies,
+		TCPReqQFullDrop:      tcpExt.ReqQFullDrop,
+		TCPSyncookiesSent:    tcpExt.SyncookiesSent,
+		TCPSyncookiesRecv:    tcpExt.SyncookiesRecv,
+		TCPSyncookiesFailed:  tcpExt.SyncookiesFailed,
+		TCPEmbryonicRsts:     tcpExt.EmbryonicRsts,
 	}
 	if err != nil {
 		entry.Error = err.Error()
@@ -131,16 +162,16 @@ func writeSample(encoder *json.Encoder, pid int, startedAt time.Time, linux *lin
 	_ = encoder.Encode(entry)
 }
 
-func readProcess(pid int, linux *linuxCollector) (float64, uint64, *int, *int, *int, *int, *int, *int, error) {
+func readProcess(pid int, linux *linuxCollector) (float64, uint64, *int, *int, *int, *int, *int, *int, tcpExtCounters, error) {
 	if runtime.GOOS == "linux" {
-		cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, err := linux.read()
+		cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, tcpExt, err := linux.read()
 		if err == nil {
-			return cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, nil
+			return cpu, rssBytes, threads, openFDs, tcpSockets, tcpEstablished, tcpListen, tcpCloseWait, tcpExt, nil
 		}
 	}
 
 	cpu, rssKB, err := readPS(pid)
-	return cpu, rssKB * 1024, readThreads(pid), readOpenFDs(pid), nil, nil, nil, nil, err
+	return cpu, rssKB * 1024, readThreads(pid), readOpenFDs(pid), nil, nil, nil, nil, tcpExtCounters{}, err
 }
 
 func newLinuxCollector(pid int) *linuxCollector {
@@ -151,10 +182,10 @@ func newLinuxCollector(pid int) *linuxCollector {
 	}
 }
 
-func (collector *linuxCollector) read() (float64, uint64, *int, *int, *int, *int, *int, *int, error) {
+func (collector *linuxCollector) read() (float64, uint64, *int, *int, *int, *int, *int, *int, tcpExtCounters, error) {
 	current, err := collector.readRaw()
 	if err != nil {
-		return 0, 0, nil, nil, nil, nil, nil, nil, err
+		return 0, 0, nil, nil, nil, nil, nil, nil, tcpExtCounters{}, err
 	}
 
 	cpu := 0.0
@@ -167,7 +198,7 @@ func (collector *linuxCollector) read() (float64, uint64, *int, *int, *int, *int
 	}
 	collector.last = current
 
-	return cpu, current.rssBytes, current.threads, current.openFDs, current.tcpSockets, current.tcpEstablished, current.tcpListen, current.tcpCloseWait, nil
+	return cpu, current.rssBytes, current.threads, current.openFDs, current.tcpSockets, current.tcpEstablished, current.tcpListen, current.tcpCloseWait, current.tcpExt, nil
 }
 
 func (collector *linuxCollector) readRaw() (*linuxProcessSample, error) {
@@ -181,6 +212,7 @@ func (collector *linuxCollector) readRaw() (*linuxProcessSample, error) {
 	}
 
 	tcpSockets, tcpEstablished, tcpListen, tcpCloseWait := readTCPStateCounts(collector.pid)
+	tcpExt := readTCPExtCounters()
 
 	return &linuxProcessSample{
 		processTicks:   processTicks,
@@ -192,6 +224,7 @@ func (collector *linuxCollector) readRaw() (*linuxProcessSample, error) {
 		tcpEstablished: tcpEstablished,
 		tcpListen:      tcpListen,
 		tcpCloseWait:   tcpCloseWait,
+		tcpExt:         tcpExt,
 	}, nil
 }
 
@@ -369,6 +402,67 @@ func readTCPStateCounts(pid int) (*int, *int, *int, *int) {
 	}
 
 	return &total, &established, &listen, &closeWait
+}
+
+func readTCPExtCounters() tcpExtCounters {
+	if runtime.GOOS != "linux" {
+		return tcpExtCounters{}
+	}
+
+	file, err := os.Open("/proc/net/netstat")
+	if err != nil {
+		return tcpExtCounters{}
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var headers []string
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || fields[0] != "TcpExt:" {
+			continue
+		}
+		if headers == nil {
+			headers = fields[1:]
+			continue
+		}
+
+		values := fields[1:]
+		if len(values) != len(headers) {
+			headers = nil
+			continue
+		}
+
+		byName := make(map[string]uint64, len(headers))
+		for index, name := range headers {
+			value, err := strconv.ParseUint(values[index], 10, 64)
+			if err != nil {
+				continue
+			}
+			byName[name] = value
+		}
+		return tcpExtCounters{
+			ListenOverflows:   optionalUint64(byName, "ListenOverflows"),
+			ListenDrops:       optionalUint64(byName, "ListenDrops"),
+			BacklogDrop:       optionalUint64(byName, "TCPBacklogDrop"),
+			ReqQFullDoCookies: optionalUint64(byName, "TCPReqQFullDoCookies"),
+			ReqQFullDrop:      optionalUint64(byName, "TCPReqQFullDrop"),
+			SyncookiesSent:    optionalUint64(byName, "SyncookiesSent"),
+			SyncookiesRecv:    optionalUint64(byName, "SyncookiesRecv"),
+			SyncookiesFailed:  optionalUint64(byName, "SyncookiesFailed"),
+			EmbryonicRsts:     optionalUint64(byName, "EmbryonicRsts"),
+		}
+	}
+
+	return tcpExtCounters{}
+}
+
+func optionalUint64(values map[string]uint64, key string) *uint64 {
+	value, ok := values[key]
+	if !ok {
+		return nil
+	}
+	return &value
 }
 
 func socketInodes(pid int) map[string]bool {

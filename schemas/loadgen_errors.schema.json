@@ -13,6 +13,10 @@
     "connection_id": { "type": "integer" },
     "target": { "type": "string" },
     "request_id": { "type": "integer" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "max_retries": { "type": "integer", "minimum": 0 },
+    "retry_after_ms": { "type": "integer", "minimum": 0 },
+    "terminal": { "type": "boolean" },
     "error": { "type": "string" }
   }
 }
