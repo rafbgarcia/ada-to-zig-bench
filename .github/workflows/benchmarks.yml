@@ -11,10 +11,47 @@ permissions:
   contents: write
 
 jobs:
+  check-missing-benchmarks:
+    runs-on: ubuntu-24.04
+    outputs:
+      has-missing-benchmarks: ${{ steps.missing-benchmarks.outputs.has-missing-benchmarks }}
+      missing-servers: ${{ steps.missing-benchmarks.outputs.missing-servers }}
+    env:
+      BENCHMARK_CONNECTIONS: '100000'
+      PAYLOAD_BYTES: '256'
+      PAYLOAD_SWEEP_BYTES: '256 4096 16384'
+      PAYLOAD_SWEEP_SECONDS: '5'
+      REQUESTS_PER_SECOND: '100000'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check for missing benchmarks
+        id: missing-benchmarks
+        run: |
+          mapfile -t missing_servers < <(scripts/run-latitude-benchmarks.sh --list-missing)
+
+          if [ "${#missing_servers[@]}" -eq 0 ]; then
+            echo "All servers already have benchmark artifacts."
+            echo "has-missing-benchmarks=false" >> "$GITHUB_OUTPUT"
+            echo "missing-servers=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf 'Missing benchmark artifacts for:\n'
+          printf '  %s\n' "${missing_servers[@]}"
+
+          missing_servers_list="$(printf '%s\n' "${missing_servers[@]}" | paste -sd ' ' -)"
+          echo "has-missing-benchmarks=true" >> "$GITHUB_OUTPUT"
+          echo "missing-servers=$missing_servers_list" >> "$GITHUB_OUTPUT"
+
   run-missing-benchmarks:
+    needs: check-missing-benchmarks
+    if: needs.check-missing-benchmarks.outputs.has-missing-benchmarks == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
+      SERVER_NAMES: ${{ needs.check-missing-benchmarks.outputs.missing-servers }}
       LATITUDESH_TOKEN: ${{ secrets.LATITUDESH_TOKEN }}
       LATITUDE_PROJECT: 'default-project'
       LATITUDE_SSH_KEYS: ${{ vars.LATITUDE_SSH_KEYS }}

@@ -65,10 +65,13 @@ LOADGEN_HOSTNAME=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-latitude-benchmarks.sh [server ...]
+Usage: scripts/run-latitude-benchmarks.sh [--list-missing] [server ...]
 
 Runs missing HTTP JSON benchmark suites on Latitude bare metal and writes each completed suite to:
   servers/<server>/benchmark/
+
+Options:
+  --list-missing             print servers missing complete benchmark artifacts and exit
 
 Environment:
   LATITUDESH_TOKEN            required by lsh in CI/non-interactive use
@@ -158,18 +161,15 @@ main() {
     exit 0
   fi
 
-  require_command lsh
-  require_command ssh
-  require_command scp
-  require_command tar
-  require_command jq
-  require_command node
+  local list_missing_only=0
+  if [[ "${1:-}" == "--list-missing" ]]; then
+    list_missing_only=1
+    shift
+  fi
 
-  [[ -n "${LATITUDESH_TOKEN:-}" || -n "${LSH_PROFILE:-}" || -f "${HOME:-}/.config/lsh/config.json" ]] || fail "LATITUDESH_TOKEN is required unless lsh is already authenticated"
-  [[ -n "$LATITUDE_SSH_KEYS" ]] || fail "LATITUDE_SSH_KEYS is required"
+  require_command jq
 
   cd "$ROOT_DIR"
-  export LSH_PROJECT="$LATITUDE_PROJECT"
 
   if (( $# > 0 )); then
     SERVERS=("$@")
@@ -189,23 +189,44 @@ main() {
     [[ -f "servers/$server/bench.json" ]] || fail "unknown server: $server"
   done
 
+  for connections in "${SCENARIO_CONNECTIONS[@]}"; do
+    [[ "$connections" =~ ^[0-9]+$ ]] || fail "invalid connection count: $connections"
+  done
+
   MISSING_SERVERS=()
   for server in "${SERVERS[@]}"; do
     if benchmark_complete "$server"; then
-      log "servers/$server/benchmark already exists with all scenarios; skipping"
+      if (( list_missing_only == 0 )); then
+        log "servers/$server/benchmark already exists with all scenarios; skipping"
+      fi
     else
       MISSING_SERVERS+=("$server")
     fi
   done
+
+  if (( list_missing_only == 1 )); then
+    if (( ${#MISSING_SERVERS[@]} > 0 )); then
+      printf '%s\n' "${MISSING_SERVERS[@]}"
+    fi
+    exit 0
+  fi
+
+  require_command lsh
+  require_command ssh
+  require_command scp
+  require_command tar
+  require_command node
+
+  [[ -n "${LATITUDESH_TOKEN:-}" || -n "${LSH_PROFILE:-}" || -f "${HOME:-}/.config/lsh/config.json" ]] || fail "LATITUDESH_TOKEN is required unless lsh is already authenticated"
+  [[ -n "$LATITUDE_SSH_KEYS" ]] || fail "LATITUDE_SSH_KEYS is required"
+
+  export LSH_PROJECT="$LATITUDE_PROJECT"
 
   if (( ${#MISSING_SERVERS[@]} == 0 )); then
     log "no missing benchmarks"
     exit 0
   fi
 
-  for connections in "${SCENARIO_CONNECTIONS[@]}"; do
-    [[ "$connections" =~ ^[0-9]+$ ]] || fail "invalid connection count: $connections"
-  done
   normalize_remote_ports
   validate_remote_port_fanout
   [[ "$LATITUDE_PROVISION_ATTEMPTS" =~ ^[0-9]+$ ]] || fail "invalid Latitude provision attempt count: $LATITUDE_PROVISION_ATTEMPTS"
