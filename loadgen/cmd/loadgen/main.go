@@ -24,6 +24,8 @@ import (
 	"time"
 )
 
+const maxErrorSamples = 50_000
+
 type requestMessage struct {
 	ID      uint64 `json:"id"`
 	Payload string `json:"payload"`
@@ -79,6 +81,8 @@ type summary struct {
 	TotalSent               uint64         `json:"total_sent"`
 	TotalReceived           uint64         `json:"total_received"`
 	TotalErrors             uint64         `json:"total_errors"`
+	LoadgenErrorSamples     uint64         `json:"loadgen_error_samples"`
+	LoadgenErrorsDropped    uint64         `json:"loadgen_errors_dropped"`
 	TotalDispatchMisses     uint64         `json:"total_dispatch_misses"`
 	PeakActiveConnections   int64          `json:"peak_active_connections"`
 	Complete                bool           `json:"complete"`
@@ -178,6 +182,8 @@ type errorLogger struct {
 	mu        sync.Mutex
 	encoder   *json.Encoder
 	startedAt time.Time
+	written   uint64
+	dropped   uint64
 }
 
 func main() {
@@ -472,6 +478,8 @@ func main() {
 		TotalSent:               sent.Load(),
 		TotalReceived:           received.Load(),
 		TotalErrors:             errorsCount.Load(),
+		LoadgenErrorSamples:     errorLog.samples(),
+		LoadgenErrorsDropped:    errorLog.droppedSamples(),
 		TotalDispatchMisses:     dispatchMisses.Load(),
 		PeakActiveConnections:   peak.Load(),
 		Complete:                true,
@@ -1138,7 +1146,24 @@ func writeJSON(path string, value any) {
 func (logger *errorLogger) write(sample loadgenErrorSample) {
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
+	if logger.written >= maxErrorSamples {
+		logger.dropped++
+		return
+	}
 	_ = logger.encoder.Encode(sample)
+	logger.written++
+}
+
+func (logger *errorLogger) samples() uint64 {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	return logger.written
+}
+
+func (logger *errorLogger) droppedSamples() uint64 {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	return logger.dropped
 }
 
 func fatalf(format string, args ...any) {
