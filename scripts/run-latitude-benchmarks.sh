@@ -912,9 +912,20 @@ for _ in {1..300}; do
   if curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null 2>&1; then
     break
   fi
+  if ! kill -0 "$(cat /opt/bench/.tmp/cloud-server/server.pid)" 2>/dev/null; then
+    echo "server process exited before health check passed" >&2
+    tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+    exit 1
+  fi
   sleep 0.2
 done
-curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null
+if ! curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null; then
+  echo "server health check failed for $SERVER_NAME on port $first_port" >&2
+  ps -fp "$(cat /opt/bench/.tmp/cloud-server/server.pid)" >&2 || true
+  ss -ltnp '( sport >= :8080 and sport <= :8111 )' >&2 || true
+  tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+  exit 1
+fi
 /opt/bench/.tmp/collector --pid "$(cat /opt/bench/.tmp/cloud-server/server.pid)" --output /opt/bench/.tmp/cloud-server/server_metrics.jsonl --interval 1s > /opt/bench/.tmp/cloud-server/collector.log 2>&1 &
 echo "$!" > /opt/bench/.tmp/cloud-server/collector.pid
 REMOTE
@@ -926,10 +937,22 @@ remote_server_stop() {
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$SERVER_IPV4" 'bash -s' <<'REMOTE' || true
 set -euo pipefail
 if [[ -f /opt/bench/.tmp/cloud-server/collector.pid ]]; then
-  kill "$(cat /opt/bench/.tmp/cloud-server/collector.pid)" 2>/dev/null || true
+  collector_pid="$(cat /opt/bench/.tmp/cloud-server/collector.pid)"
+  kill "$collector_pid" 2>/dev/null || true
+  for _ in {1..50}; do
+    kill -0 "$collector_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -9 "$collector_pid" 2>/dev/null || true
 fi
 if [[ -f /opt/bench/.tmp/cloud-server/server.pid ]]; then
-  kill "$(cat /opt/bench/.tmp/cloud-server/server.pid)" 2>/dev/null || true
+  server_pid="$(cat /opt/bench/.tmp/cloud-server/server.pid)"
+  kill "$server_pid" 2>/dev/null || true
+  for _ in {1..100}; do
+    kill -0 "$server_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -9 "$server_pid" 2>/dev/null || true
 fi
 REMOTE
 }
