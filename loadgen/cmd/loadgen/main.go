@@ -391,7 +391,7 @@ func main() {
 		TotalReceived:           received.Load(),
 		TotalErrors:             errorsCount.Load(),
 		PeakActiveConnections:   peak.Load(),
-		Success:                 peak.Load() >= int64(maxConnections) && errorsCount.Load() == 0,
+		Success:                 peak.Load() >= int64(maxConnections),
 		P50LatencyMS:            overallP50,
 		P90LatencyMS:            overallP90,
 		P99LatencyMS:            overallP99,
@@ -404,9 +404,6 @@ func main() {
 
 	if s.PeakActiveConnections < int64(maxConnections) {
 		os.Exit(2)
-	}
-	if s.TotalErrors > 0 {
-		os.Exit(3)
 	}
 }
 

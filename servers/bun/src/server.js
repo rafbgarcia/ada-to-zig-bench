@@ -20,7 +20,7 @@ const serverEvents = serverEventsPath ? createWriteStream(serverEventsPath, { fl
 const runtimeMetrics = runtimeMetricsPath ? createWriteStream(runtimeMetricsPath, { flags: 'a' }) : null;
 const runtimeEvents = runtimeEventsPath ? createWriteStream(runtimeEventsPath, { flags: 'a' }) : null;
 const startedAt = Date.now();
-const servers = ports.map((port) => Bun.serve({ hostname: host, port, fetch: handleRequest }));
+const servers = ports.map((port) => Bun.serve({ hostname: host, port, idleTimeout: 120, fetch: handleRequest }));
 
 for (const port of ports) {
   console.log(`bun HTTP JSON server listening on http://${host}:${port}`);
