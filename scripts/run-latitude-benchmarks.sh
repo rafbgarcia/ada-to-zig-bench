@@ -224,6 +224,11 @@ scenario_json() {
   printf '%s\n' "${SCENARIO_CONNECTIONS[@]}" | jq -cs 'map(tonumber)'
 }
 
+connection_targets_csv() {
+  local IFS=,
+  printf '%s' "${SCENARIO_CONNECTIONS[*]}"
+}
+
 create_infrastructure() {
   local attempt suffix ssh_ready
 
@@ -738,15 +743,24 @@ run_server_suite() {
   set -e
 
   remote_server_stop
-  fetch_loadgen_artifacts "$local_work_dir"
+  local artifact_status=0
+  fetch_loadgen_artifacts "$local_work_dir" || artifact_status=$?
   fetch_server_artifacts "$local_work_dir"
-  write_suite_metadata "$server" "$started_at" "$local_work_dir"
+  if [[ -f "$local_work_dir/summary.json" ]]; then
+    write_suite_metadata "$server" "$started_at" "$local_work_dir"
+  else
+    log "loadgen summary is missing for $server; preserving available artifacts without metadata enrichment"
+    artifact_status=1
+  fi
 
   rm -rf "servers/$server/benchmark"
   mv "$local_work_dir" "servers/$server/benchmark"
   log "wrote servers/$server/benchmark"
   if (( status != 0 )); then
     fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
+  fi
+  if (( artifact_status != 0 )); then
+    fail "suite completed for $server but loadgen artifacts were incomplete; artifacts were preserved"
   fi
 }
 
@@ -815,10 +829,12 @@ fetch_server_artifacts() {
 
 run_loadgen() {
   local connection_targets="${SCENARIO_CONNECTIONS[*]}"
+  local remote_connection_targets
+  remote_connection_targets="$(connection_targets_csv)"
   log "running staged connection load from loadgen host: $connection_targets"
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
-    CONNECTION_TARGETS="$connection_targets" \
+    CONNECTION_TARGETS="$remote_connection_targets" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
     TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
     PAYLOAD_BYTES="$PAYLOAD_BYTES" \
@@ -860,6 +876,10 @@ REMOTE
 
 fetch_loadgen_artifacts() {
   local local_work_dir="$1"
+  if ! ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" "test -d /opt/bench/.tmp/loadgen"; then
+    log "loadgen artifacts directory is missing on loadgen host"
+    return 1
+  fi
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" "tar -C /opt/bench/.tmp/loadgen -czf - ." | tar -xzf - -C "$local_work_dir"
 }
 
