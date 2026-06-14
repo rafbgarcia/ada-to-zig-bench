@@ -261,6 +261,10 @@ payload_sweep_json() {
   printf '%s\n' "$PAYLOAD_SWEEP_BYTES" | tr ', ' '\n' | awk 'NF' | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)'
 }
 
+payload_sweep_csv() {
+  printf '%s\n' "$PAYLOAD_SWEEP_BYTES" | tr ', ' '\n' | awk 'NF' | paste -sd, -
+}
+
 connection_targets_csv() {
   local IFS=,
   printf '%s' "${SCENARIO_CONNECTIONS[*]}"
@@ -947,7 +951,7 @@ run_loadgen() {
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
     TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
     PAYLOAD_BYTES="$PAYLOAD_BYTES" \
-    PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
+    PAYLOAD_SWEEP_BYTES="$(payload_sweep_csv)" \
     PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
     BASELINE_SECONDS="$BASELINE_SECONDS" \
     SETTLE_SECONDS="$SETTLE_SECONDS" \
