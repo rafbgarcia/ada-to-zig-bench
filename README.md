@@ -1,15 +1,18 @@
 # HTTP JSON Runtime Benchmark
 
-This repository benchmarks language runtimes with a small, repeatable HTTP JSON server workload.
+This repository benchmarks language/runtime implementations with a small, repeatable HTTP JSON server workload.
+
+This is not a general language-speed score. It measures the resource cost of one HTTP/1.1 server process holding many long-lived TCP connections while doing a fixed amount of JSON request work.
 
 Suite 1 is `http-json`:
 
-- `POST /json` accepts `{ "id": number, "payload": string }`.
-- The server parses JSON, validates fields, computes a deterministic checksum, and serializes `{ "id", "len", "checksum" }`.
+- `POST /json` accepts `{ "id": number, "payload": string }` with a 1 MiB maximum request body.
+- The server parses JSON, validates `id` as a non-negative integer and `payload` as a string, computes 32-bit FNV-1a over the UTF-8 payload bytes, and serializes `{ "id", "len", "checksum" }`.
+- Responses should be JSON with `Content-Length`, `Content-Type: application/json`, and HTTP/1.1 keep-alive.
 - `/health` is used by orchestration.
 - `/runtime` and runtime JSONL files expose runtime-specific memory/GC counters where available.
 
-The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, a fixed connection ramp to the target, a fixed request-rate ramp to the target, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
+The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, a fixed connection ramp to the target, a fixed request-rate ramp to the target, a short payload-size sweep after the target RPS is reached, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
 
 ## Server Layout
 
@@ -34,10 +37,12 @@ The current implementations are:
 
 - `servers/node`: Node.js stdlib HTTP server
 - `servers/bun`: Bun native HTTP server
+- `servers/rust-hyper-tokio-st`: Rust Hyper HTTP/1.1 server on a single-thread Tokio runtime
+- `servers/rust-hyper-tokio-mt`: Rust Hyper HTTP/1.1 server on a multi-thread Tokio runtime
 
 ## Local Smoke Test
 
-Requirements: Go 1.24, Node.js 24, and Bun if running `servers/bun`.
+Requirements: Go 1.24, Node.js 24, Bun if running `servers/bun`, and Rust stable if running the Rust servers.
 
 ```sh
 go mod download
@@ -56,6 +61,8 @@ Defaults:
 server:                    node
 connection_target:         "1000000"
 payload_bytes:             256
+payload_sweep_bytes:       "256 1024 4096 16384"
+payload_sweep_seconds:     5
 requests/sec:              100000 final target
 request_ramp_seconds:      10
 baseline:                  0s
@@ -114,6 +121,8 @@ SSH_CONNECT_TIMEOUT_SECONDS=5
 BENCHMARK_CONNECTIONS=1000000
 REQUESTS_PER_SECOND=100000
 PAYLOAD_BYTES=256
+PAYLOAD_SWEEP_BYTES="256 1024 4096 16384"
+PAYLOAD_SWEEP_SECONDS=5
 TARGET_CONNECTION_RATE=50000
 TRAFFIC_SECONDS=10
 BASELINE_SECONDS=0
@@ -128,9 +137,9 @@ The Latitude runner raises Linux limits on both hosts before the measured run. I
 
 `server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, and Linux TCP socket state counts where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors.
 
-`summary.json.total_errors` and `loadgen_errors.jsonl` capture response, protocol, and connection failures observed by the load generator. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. A run fails orchestration when the load generator cannot reach the configured connection target or cannot produce a complete summary.
+`summary.json.total_errors` and `loadgen_errors.jsonl` capture response, protocol, checksum, and connection failures observed by the load generator. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. A run fails orchestration when the load generator cannot reach the configured connection target or cannot produce a complete summary.
 
-`BENCHMARK_CONNECTIONS` is the connection target. The default `1000000` means the loadgen opens connections at `TARGET_CONNECTION_RATE=50000` until it reaches 1M, then ramps request dispatch to `REQUESTS_PER_SECOND=100000` over `TRAFFIC_SECONDS=10`. With defaults, the benchmark reaches 1M connections in about 20 seconds and reaches 100k requests per second 10 seconds later.
+`BENCHMARK_CONNECTIONS` is the connection target. The default `1000000` means the loadgen opens connections at `TARGET_CONNECTION_RATE=50000` until it reaches 1M, then ramps request dispatch to `REQUESTS_PER_SECOND=100000` over `TRAFFIC_SECONDS=10`. After target RPS is reached, it sends each configured `PAYLOAD_SWEEP_BYTES` size for `PAYLOAD_SWEEP_SECONDS` while holding the same connection count and request rate. With defaults, the benchmark reaches 1M connections in about 20 seconds, reaches 100k requests per second 10 seconds later, then runs 20 seconds of payload-size sweep.
 
 ## GitHub Workflow
 
@@ -152,7 +161,7 @@ Required repository variable or secret:
 LATITUDE_SSH_KEYS
 ```
 
-Useful repository variables mirror the local environment names: `LATITUDE_PROJECT`, `LATITUDE_SITE`, `LATITUDE_SERVER_PLAN`, `LATITUDE_LOADGEN_PLAN`, `BENCHMARK_CONNECTIONS`, `REQUESTS_PER_SECOND`, `PAYLOAD_BYTES`, and `TRAFFIC_SECONDS`.
+Useful repository variables mirror the local environment names: `LATITUDE_PROJECT`, `LATITUDE_SITE`, `LATITUDE_SERVER_PLAN`, `LATITUDE_LOADGEN_PLAN`, `BENCHMARK_CONNECTIONS`, `REQUESTS_PER_SECOND`, `PAYLOAD_BYTES`, `PAYLOAD_SWEEP_BYTES`, `PAYLOAD_SWEEP_SECONDS`, and `TRAFFIC_SECONDS`.
 
 ## Replay UI
 
@@ -172,6 +181,7 @@ npm run build --prefix web
 - Use dedicated bare metal for the measured server and a separate dedicated host for load generation.
 - Keep loadgen and server in the same Latitude site. Public IPv4 is the default because Latitude virtual networks require extra OS/VLAN setup; private networking can be added later if public-network variance becomes material.
 - Keep the connection and request-rate ramps fixed across implementations. This makes differences easier to compare because every runtime sees the same 50k connections/sec ramp followed by the same 10k requests/sec/sec ramp.
-- Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, and open FDs over the ramp timeline.
+- Treat latency as a secondary backpressure/correctness signal. Primary metrics are server activity counters, CPU percent, RSS, threads, open FDs, RSS per 10k live connections, FDs per connection, and CPU percent per 10k successful RPS over the ramp timeline.
+- Treat CPU model as part of the implementation identity. Single-threaded and multi-threaded variants should be separate benchmark entries.
 - Install each language/runtime and implementation dependencies before the measured run. The runner does this during host preparation from each `bench.json` manifest.
 - Delete `servers/<server>/benchmark` to force a rerun. Otherwise, the Latitude runner skips implementations whose summary contains the configured connection target.

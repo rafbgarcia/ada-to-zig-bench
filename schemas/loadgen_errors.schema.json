@@ -8,6 +8,7 @@
     "phase": { "type": "string" },
     "stage_index": { "type": "integer" },
     "target_connections": { "type": "integer", "minimum": 0 },
+    "payload_bytes": { "type": "integer", "minimum": 0 },
     "operation": { "type": "string" },
     "connection_id": { "type": "integer" },
     "target": { "type": "string" },

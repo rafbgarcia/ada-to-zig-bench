@@ -9,6 +9,7 @@
     "stage_index": { "type": "integer" },
     "target_connections": { "type": "integer", "minimum": 0 },
     "target_requests_per_second": { "type": "integer", "minimum": 0 },
+    "payload_bytes": { "type": "integer", "minimum": 0 },
     "active_connections": { "type": "integer" },
     "sent": { "type": "integer" },
     "received": { "type": "integer" },

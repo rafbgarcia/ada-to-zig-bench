@@ -1,0 +1,8 @@
+{
+  "id": "rust-hyper-tokio-mt",
+  "language": "Rust",
+  "runtime": "Hyper + Tokio multi-thread",
+  "suite": "http-json",
+  "install": "cargo build --release --locked",
+  "run": "./target/release/bench-rust-hyper-tokio-mt"
+}

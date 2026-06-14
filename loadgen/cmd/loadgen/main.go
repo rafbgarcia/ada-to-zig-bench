@@ -42,6 +42,7 @@ type metricSample struct {
 	StageIndex              int     `json:"stage_index"`
 	TargetConns             int     `json:"target_connections"`
 	TargetRPS               int     `json:"target_requests_per_second"`
+	PayloadBytes            int     `json:"payload_bytes"`
 	ActiveConns             int64   `json:"active_connections"`
 	Sent                    uint64  `json:"sent"`
 	Received                uint64  `json:"received"`
@@ -63,6 +64,8 @@ type summary struct {
 	Connections             int            `json:"connections"`
 	ConnectionTargets       []int          `json:"connection_targets"`
 	PayloadBytes            int            `json:"payload_bytes"`
+	PayloadSweepBytes       []int          `json:"payload_sweep_bytes"`
+	PayloadSweepSeconds     int            `json:"payload_sweep_seconds"`
 	TargetRequestsPerSecond int            `json:"target_requests_per_second"`
 	TargetMessagesPerSecond int            `json:"target_messages_per_second"`
 	TargetConnectionRate    int            `json:"target_connection_rate"`
@@ -88,8 +91,10 @@ type summary struct {
 
 type stageSummary struct {
 	Index                   int     `json:"index"`
+	Phase                   string  `json:"phase"`
 	TargetConnections       int     `json:"target_connections"`
 	TargetRequestsPerSecond int     `json:"target_requests_per_second"`
+	PayloadBytes            int     `json:"payload_bytes"`
 	StartedAt               string  `json:"started_at"`
 	TrafficStartedAt        string  `json:"traffic_started_at"`
 	TrafficFinishedAt       string  `json:"traffic_finished_at"`
@@ -138,6 +143,7 @@ type clientConn struct {
 type requestDispatch struct {
 	id         uint64
 	stageIndex int
+	payload    string
 }
 
 type latencySample struct {
@@ -146,10 +152,11 @@ type latencySample struct {
 }
 
 type runMarker struct {
-	Phase       string
-	StageIndex  int
-	TargetConns int
-	TargetRPS   int
+	Phase        string
+	StageIndex   int
+	TargetConns  int
+	TargetRPS    int
+	PayloadBytes int
 }
 
 type loadgenErrorSample struct {
@@ -158,6 +165,7 @@ type loadgenErrorSample struct {
 	Phase          string `json:"phase"`
 	StageIndex     int    `json:"stage_index"`
 	TargetConns    int    `json:"target_connections"`
+	PayloadBytes   int    `json:"payload_bytes"`
 	Operation      string `json:"operation"`
 	ConnectionID   int    `json:"connection_id"`
 	Target         string `json:"target"`
@@ -177,6 +185,8 @@ func main() {
 	var connections int
 	var connectionTargets string
 	var payloadBytes int
+	var payloadSweepBytesRaw string
+	var payloadSweepSeconds int
 	var requestsPerSecond int
 	var targetConnectionRate int
 	var baselineSeconds int
@@ -191,6 +201,8 @@ func main() {
 	flag.IntVar(&connections, "connections", 1_000_000, "number of persistent HTTP connections")
 	flag.StringVar(&connectionTargets, "connection-targets", "", "comma- or space-separated persistent connection targets; overrides --connections when set")
 	flag.IntVar(&payloadBytes, "payload-bytes", 256, "payload string size in bytes")
+	flag.StringVar(&payloadSweepBytesRaw, "payload-sweep-bytes", "", "comma- or space-separated payload sizes to send after the request-rate ramp; empty disables the sweep")
+	flag.IntVar(&payloadSweepSeconds, "payload-sweep-seconds", 0, "seconds to send each payload size in --payload-sweep-bytes")
 	flag.IntVar(&requestsPerSecond, "requests-per-second", 100_000, "final global target requests per second")
 	flag.IntVar(&targetConnectionRate, "target-connection-rate", 50_000, "target new HTTP connections per second during ramp")
 	flag.IntVar(&baselineSeconds, "baseline-seconds", 0, "seconds to sample before opening connections")
@@ -205,12 +217,19 @@ func main() {
 	if err != nil {
 		fatalf("parse connection targets: %v", err)
 	}
+	payloadSweepBytes, err := parsePayloadSizes(payloadSweepBytesRaw)
+	if err != nil {
+		fatalf("parse payload sweep sizes: %v", err)
+	}
 	maxConnections := connectionSchedule[len(connectionSchedule)-1]
 	if stabilizeSeconds < 0 {
 		stabilizeSeconds = settleSeconds
 	}
-	if maxConnections <= 0 || payloadBytes < 0 || requestsPerSecond <= 0 || targetConnectionRate <= 0 || baselineSeconds < 0 || settleSeconds < 0 || stabilizeSeconds < 0 || trafficSeconds <= 0 || cooldownSeconds < 0 {
+	if maxConnections <= 0 || payloadBytes < 0 || payloadSweepSeconds < 0 || requestsPerSecond <= 0 || targetConnectionRate <= 0 || baselineSeconds < 0 || settleSeconds < 0 || stabilizeSeconds < 0 || trafficSeconds <= 0 || cooldownSeconds < 0 {
 		fatalf("invalid arguments")
+	}
+	if len(payloadSweepBytes) > 0 && payloadSweepSeconds == 0 {
+		fatalf("--payload-sweep-seconds must be positive when --payload-sweep-bytes is set")
 	}
 
 	targets, err := parseTargets(targetURL, targetURLs)
@@ -256,7 +275,7 @@ func main() {
 	latencyCh := make(chan latencySample, 1_000_000)
 	registerCh := make(chan *clientConn, maxConnections)
 	marker := atomic.Value{}
-	marker.Store(runMarker{Phase: "baseline", StageIndex: -1, TargetConns: 0, TargetRPS: requestsPerSecond})
+	marker.Store(runMarker{Phase: "baseline", StageIndex: -1, TargetConns: 0, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 
 	var activeMu sync.Mutex
 	activeConns := make([]*clientConn, 0, maxConnections)
@@ -289,7 +308,7 @@ func main() {
 		cancel()
 	}
 
-	stages := make([]stageSummary, 0, len(connectionSchedule))
+	stages := make([]stageSummary, 0, len(connectionSchedule)+len(payloadSweepBytes))
 	for index, targetConnections := range connectionSchedule {
 		if runCtx.Err() != nil {
 			break
@@ -304,7 +323,7 @@ func main() {
 		stageLatencyStart := len(allLatencies)
 		allLatenciesMu.Unlock()
 
-		marker.Store(runMarker{Phase: "ramp", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond})
+		marker.Store(runMarker{Phase: "ramp", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 		rampStartedAt := time.Now().UTC()
 		openConnections(runCtx, targetConnections, targetConnectionRate, targets, payload, &active, &peak, &sent, &received, &errorsCount, latencyCh, registerCh, &wg, &marker, errorLog)
 		rampSeconds := int(math.Ceil(time.Since(rampStartedAt).Seconds()))
@@ -312,20 +331,21 @@ func main() {
 			cancel()
 		}
 
-		marker.Store(runMarker{Phase: "settle", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond})
+		marker.Store(runMarker{Phase: "settle", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 		if waitPhase(runCtx, time.Duration(settleSeconds)*time.Second) != nil {
 			cancel()
 		}
 
-		marker.Store(runMarker{Phase: "traffic", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond})
+		marker.Store(runMarker{Phase: "traffic", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 		trafficStartedAt := time.Now().UTC()
 		trafficFinishedAt := trafficStartedAt.Add(time.Duration(trafficSeconds) * time.Second)
 		if runCtx.Err() == nil {
-			sendRequests(runCtx, trafficStartedAt, trafficFinishedAt, requestsPerSecond, index, &requestID, &errorsCount, &dispatchMisses, &activeMu, &activeConns, &marker, errorLog)
+			sendRequests(runCtx, trafficStartedAt, trafficFinishedAt, requestsPerSecond, index, payload, true, &requestID, &errorsCount, &dispatchMisses, &activeMu, &activeConns, &marker, errorLog)
+			waitForInFlight(runCtx, &activeMu, &activeConns)
 		}
 		trafficEndedAt := time.Now().UTC()
 
-		marker.Store(runMarker{Phase: "stabilize", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond})
+		marker.Store(runMarker{Phase: "stabilize", StageIndex: index, TargetConns: targetConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 		if waitPhase(runCtx, time.Duration(stabilizeSeconds)*time.Second) != nil {
 			cancel()
 		}
@@ -336,8 +356,10 @@ func main() {
 		allLatenciesMu.Unlock()
 		stages = append(stages, stageSummary{
 			Index:                   index,
+			Phase:                   "traffic",
 			TargetConnections:       targetConnections,
 			TargetRequestsPerSecond: requestsPerSecond,
+			PayloadBytes:            payloadBytes,
 			StartedAt:               stageStarted.Format(time.RFC3339),
 			TrafficStartedAt:        trafficStartedAt.Format(time.RFC3339),
 			TrafficFinishedAt:       trafficEndedAt.Format(time.RFC3339),
@@ -357,7 +379,56 @@ func main() {
 		})
 	}
 
-	marker.Store(runMarker{Phase: "cooldown", StageIndex: len(connectionSchedule) - 1, TargetConns: maxConnections, TargetRPS: requestsPerSecond})
+	if runCtx.Err() == nil && len(payloadSweepBytes) > 0 {
+		for _, sweepPayloadBytes := range payloadSweepBytes {
+			stageIndex := len(stages)
+			sweepPayload := strings.Repeat("x", sweepPayloadBytes)
+			stageStarted := time.Now().UTC()
+			stageSentStart := sent.Load()
+			stageReceivedStart := received.Load()
+			stageErrorsStart := errorsCount.Load()
+			stageDispatchMissesStart := dispatchMisses.Load()
+			allLatenciesMu.Lock()
+			stageLatencyStart := len(allLatencies)
+			allLatenciesMu.Unlock()
+
+			marker.Store(runMarker{Phase: "payload_sweep", StageIndex: stageIndex, TargetConns: maxConnections, TargetRPS: requestsPerSecond, PayloadBytes: sweepPayloadBytes})
+			trafficStartedAt := time.Now().UTC()
+			trafficFinishedAt := trafficStartedAt.Add(time.Duration(payloadSweepSeconds) * time.Second)
+			sendRequests(runCtx, trafficStartedAt, trafficFinishedAt, requestsPerSecond, stageIndex, sweepPayload, false, &requestID, &errorsCount, &dispatchMisses, &activeMu, &activeConns, &marker, errorLog)
+			waitForInFlight(runCtx, &activeMu, &activeConns)
+			trafficEndedAt := time.Now().UTC()
+
+			allLatenciesMu.Lock()
+			stageLatencies := append([]float64(nil), allLatencies[stageLatencyStart:]...)
+			allLatenciesMu.Unlock()
+			stages = append(stages, stageSummary{
+				Index:                   stageIndex,
+				Phase:                   "payload_sweep",
+				TargetConnections:       maxConnections,
+				TargetRequestsPerSecond: requestsPerSecond,
+				PayloadBytes:            sweepPayloadBytes,
+				StartedAt:               stageStarted.Format(time.RFC3339),
+				TrafficStartedAt:        trafficStartedAt.Format(time.RFC3339),
+				TrafficFinishedAt:       trafficEndedAt.Format(time.RFC3339),
+				FinishedAt:              time.Now().UTC().Format(time.RFC3339),
+				RampSeconds:             0,
+				TrafficSeconds:          payloadSweepSeconds,
+				StabilizeSeconds:        0,
+				ActiveConnections:       active.Load(),
+				Sent:                    sent.Load() - stageSentStart,
+				Received:                received.Load() - stageReceivedStart,
+				Errors:                  errorsCount.Load() - stageErrorsStart,
+				DispatchMisses:          dispatchMisses.Load() - stageDispatchMissesStart,
+				P50LatencyMS:            percentile(stageLatencies, 50),
+				P90LatencyMS:            percentile(stageLatencies, 90),
+				P99LatencyMS:            percentile(stageLatencies, 99),
+				MaxLatencyMS:            percentile(stageLatencies, 100),
+			})
+		}
+	}
+
+	marker.Store(runMarker{Phase: "cooldown", StageIndex: len(stages) - 1, TargetConns: maxConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadBytes})
 	if waitPhase(runCtx, time.Duration(cooldownSeconds)*time.Second) != nil {
 		cancel()
 	}
@@ -385,6 +456,8 @@ func main() {
 		Connections:             maxConnections,
 		ConnectionTargets:       connectionSchedule,
 		PayloadBytes:            payloadBytes,
+		PayloadSweepBytes:       payloadSweepBytes,
+		PayloadSweepSeconds:     payloadSweepSeconds,
 		TargetRequestsPerSecond: requestsPerSecond,
 		TargetMessagesPerSecond: requestsPerSecond,
 		TargetConnectionRate:    targetConnectionRate,
@@ -486,7 +559,11 @@ func (c *clientConn) warmup() error {
 }
 
 func (c *clientConn) send(requestDispatch requestDispatch) error {
-	message := requestMessage{ID: requestDispatch.id, Payload: c.payload}
+	payload := requestDispatch.payload
+	if payload == "" {
+		payload = c.payload
+	}
+	message := requestMessage{ID: requestDispatch.id, Payload: payload}
 	body, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -529,8 +606,9 @@ func (c *clientConn) send(requestDispatch requestDispatch) error {
 	if err := json.Unmarshal(data, &response); err != nil {
 		return err
 	}
-	if response.ID != requestDispatch.id || response.Len != len(c.payload) {
-		return fmt.Errorf("unexpected response: id=%d len=%d", response.ID, response.Len)
+	expectedChecksum := checksum(payload)
+	if response.ID != requestDispatch.id || response.Len != len(payload) || response.Checksum != expectedChecksum {
+		return fmt.Errorf("unexpected response: id=%d len=%d checksum=%d", response.ID, response.Len, response.Checksum)
 	}
 
 	c.received.Add(1)
@@ -556,6 +634,7 @@ func (c *clientConn) logError(operation string, requestID uint64, err error) {
 		Phase:          marker.Phase,
 		StageIndex:     marker.StageIndex,
 		TargetConns:    marker.TargetConns,
+		PayloadBytes:   marker.PayloadBytes,
 		Operation:      operation,
 		ConnectionID:   c.id,
 		Target:         c.target.raw,
@@ -647,6 +726,30 @@ func parseConnectionTargets(value string, fallback int) ([]int, error) {
 	return targets, nil
 }
 
+func parsePayloadSizes(value string) ([]int, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	sizes := make([]int, 0, len(fields))
+	seen := make(map[int]bool, len(fields))
+	for _, field := range fields {
+		size, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil || size < 0 {
+			return nil, fmt.Errorf("invalid payload size %q", field)
+		}
+		if seen[size] {
+			continue
+		}
+		seen[size] = true
+		sizes = append(sizes, size)
+	}
+	return sizes, nil
+}
+
 func openConnections(ctx context.Context, targetConnections int, targetConnectionRate int, targets []target, payload string, active *atomic.Int64, peak *atomic.Int64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, latencyCh chan<- latencySample, registerCh chan<- *clientConn, wg *sync.WaitGroup, marker *atomic.Value, errorLog *errorLogger) {
 	if targetConnections <= 0 {
 		return
@@ -709,7 +812,7 @@ func openConnections(ctx context.Context, targetConnections int, targetConnectio
 	}
 }
 
-func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsPerSecond int, stageIndex int, requestID *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64, activeMu *sync.Mutex, activeConns *[]*clientConn, marker *atomic.Value, errorLog *errorLogger) {
+func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsPerSecond int, stageIndex int, payload string, rampRPS bool, requestID *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64, activeMu *sync.Mutex, activeConns *[]*clientConn, marker *atomic.Value, errorLog *errorLogger) {
 	if requestsPerSecond <= 0 {
 		waitUntil(ctx, end)
 		return
@@ -752,7 +855,7 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 
 			id := requestID.Add(1)
 			select {
-			case conn.sendCh <- requestDispatch{id: id, stageIndex: stageIndex}:
+			case conn.sendCh <- requestDispatch{id: id, stageIndex: stageIndex, payload: payload}:
 			default:
 				conn.inFlight.Store(false)
 				dispatchMisses.Add(1)
@@ -767,12 +870,25 @@ func sendRequests(ctx context.Context, start time.Time, end time.Time, requestsP
 		}
 
 		elapsedSeconds := math.Ceil(tickTime.Sub(start).Seconds())
-		targetRPS := math.Min(float64(requestsPerSecond), rpsStep*elapsedSeconds)
+		targetRPS := float64(requestsPerSecond)
+		if rampRPS {
+			targetRPS = math.Min(float64(requestsPerSecond), rpsStep*elapsedSeconds)
+		}
 		current := currentMarker(marker)
 		current.TargetRPS = int(math.Round(targetRPS))
+		current.PayloadBytes = len(payload)
 		marker.Store(current)
 		dispatch(targetRPS)
 	}
+}
+
+func checksum(payload string) uint32 {
+	var value uint32 = 2166136261
+	for index := 0; index < len(payload); index++ {
+		value ^= uint32(payload[index])
+		value *= 16777619
+	}
+	return value
 }
 
 func nextIdleConn(conns []*clientConn, nextConn *int) *clientConn {
@@ -794,6 +910,33 @@ func nextIdleConn(conns []*clientConn, nextConn *int) *clientConn {
 	return nil
 }
 
+func waitForInFlight(ctx context.Context, activeMu *sync.Mutex, activeConns *[]*clientConn) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		activeMu.Lock()
+		inFlight := false
+		for _, conn := range *activeConns {
+			if conn.inFlight.Load() {
+				inFlight = true
+				break
+			}
+		}
+		activeMu.Unlock()
+
+		if !inFlight {
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func logDispatchError(errorLog *errorLogger, marker *atomic.Value, operation string, requestID uint64, err error) {
 	if errorLog == nil || err == nil {
 		return
@@ -805,6 +948,7 @@ func logDispatchError(errorLog *errorLogger, marker *atomic.Value, operation str
 		Phase:          current.Phase,
 		StageIndex:     current.StageIndex,
 		TargetConns:    current.TargetConns,
+		PayloadBytes:   current.PayloadBytes,
 		Operation:      operation,
 		ConnectionID:   -1,
 		RequestID:      requestID,
@@ -857,6 +1001,7 @@ func drainAndWriteSample(now time.Time, startedAt time.Time, marker runMarker, e
 				StageIndex:              marker.StageIndex,
 				TargetConns:             marker.TargetConns,
 				TargetRPS:               marker.TargetRPS,
+				PayloadBytes:            marker.PayloadBytes,
 				ActiveConns:             active.Load(),
 				Sent:                    currentSent,
 				Received:                currentReceived,

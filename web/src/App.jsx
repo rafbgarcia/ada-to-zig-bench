@@ -26,7 +26,9 @@ import {
 } from './data.js';
 import {
   formatCompact,
+  formatFixed,
   formatNumber,
+  formatRatio,
   formatRate,
   formatRunDate,
   formatSeriesValue,
@@ -198,8 +200,8 @@ function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-brand">
         <div className="eyebrow"><BarChart3 size={15} /> Server Benchmark</div>
-        <h1>HTTP JSON</h1>
-        <p>Select servers to compare activity and resource usage.</p>
+        <h1>Connection + JSON</h1>
+        <p>Compare resource cost for long-lived HTTP connections with small JSON work.</p>
       </div>
 
       <div className="sidebar-section">
@@ -294,20 +296,47 @@ function BenchColumn({ run, accent, loaded, loading, error, groups, showRuntimeE
       ) : loading || !loaded ? (
         <div className="column-state"><Loader2 size={16} className="spin" /> Loading run…</div>
       ) : (
-        <div className="column-charts">
-          {groups.map((group) => (
-            <MetricChart
-              key={group.id}
-              group={group}
-              loaded={loaded}
-              phases={loaded.phases ?? []}
-              showRuntimeEvents={showRuntimeEvents}
-              runtimeMarkers={runtimeMarkers}
-            />
-          ))}
-        </div>
+        <>
+          <RunSummary loaded={loaded} />
+          <div className="column-charts">
+            {groups.map((group) => (
+              <MetricChart
+                key={group.id}
+                group={group}
+                loaded={loaded}
+                phases={loaded.phases ?? []}
+                showRuntimeEvents={showRuntimeEvents}
+                runtimeMarkers={runtimeMarkers}
+              />
+            ))}
+          </div>
+        </>
       )}
     </section>
+  );
+}
+
+function RunSummary({ loaded }) {
+  const stats = useMemo(() => summarizeRun(loaded), [loaded]);
+
+  return (
+    <div className="summary-grid">
+      <SummaryItem label="Peak RSS" value={`${formatFixed(stats.peakRssMb, 1)} MB`} />
+      <SummaryItem label="RSS / 10k conns" value={`${formatFixed(stats.peakRssPer10k, 1)} MB`} />
+      <SummaryItem label="Avg CPU traffic" value={`${formatFixed(stats.avgTrafficCpu, 1)}%`} />
+      <SummaryItem label="FDs / conn" value={formatRatio(stats.peakFdsPerConnection, 2)} />
+      <SummaryItem label="Errors" value={formatNumber(stats.totalErrors)} tone={stats.totalErrors > 0 ? 'bad' : undefined} />
+      <SummaryItem label="Dispatch misses" value={formatNumber(stats.totalDispatchMisses)} tone={stats.totalDispatchMisses > 0 ? 'warn' : undefined} />
+    </div>
+  );
+}
+
+function SummaryItem({ label, value, tone }) {
+  return (
+    <div className={`summary-item${tone ? ` summary-${tone}` : ''}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -487,4 +516,32 @@ function ChartTooltip({ active, payload, label, group }) {
 function formatTargets(values) {
   if (!Array.isArray(values) || values.length === 0) return '--';
   return values.map((value) => formatCompact(value)).join(' → ');
+}
+
+function summarizeRun(loaded) {
+  const timeline = loaded?.timeline ?? [];
+  const trafficRows = timeline.filter((row) => row.phase === 'traffic' || row.phase === 'payload_sweep');
+  const peakRssMb = maxOf(timeline, 'rssMb');
+  const peakRssPer10k = maxOf(timeline, 'rssMbPer10kConnections');
+  const peakFdsPerConnection = maxOf(timeline, 'fdsPerConnection');
+  const avgTrafficCpu = averageOf(trafficRows, 'cpuPercent');
+  return {
+    peakRssMb,
+    peakRssPer10k,
+    peakFdsPerConnection,
+    avgTrafficCpu,
+    totalErrors: Number(loaded?.summary?.total_errors ?? 0),
+    totalDispatchMisses: Number(loaded?.summary?.total_dispatch_misses ?? 0),
+  };
+}
+
+function maxOf(rows, key) {
+  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  return values.length ? Math.max(...values) : 0;
+}
+
+function averageOf(rows, key) {
+  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  if (values.length === 0) return 0;
+  return values.reduce((total, value) => total + value, 0) / values.length;
 }

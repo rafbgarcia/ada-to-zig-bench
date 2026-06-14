@@ -6,6 +6,8 @@ CONNECTION_TARGETS="${2:-${BENCHMARK_CONNECTIONS:-1000000}}"
 PAYLOAD_BYTES="${3:-256}"
 REQUESTS_PER_SECOND="${4:-100000}"
 TRAFFIC_SECONDS="${5:-10}"
+PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
+PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-0}"
@@ -120,6 +122,8 @@ URLS="$URLS" \
 CONNECTION_TARGETS="$CONNECTION_TARGETS" \
 MAX_CONNECTIONS="$MAX_CONNECTIONS" \
 PAYLOAD_BYTES="$PAYLOAD_BYTES" \
+PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
+PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
 REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
 TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
 BASELINE_SECONDS="$BASELINE_SECONDS" \
@@ -142,6 +146,8 @@ const metadata = {
   connections: Number(process.env.MAX_CONNECTIONS),
   connection_targets: process.env.CONNECTION_TARGETS.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_bytes: Number(process.env.PAYLOAD_BYTES),
+  payload_sweep_bytes: process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
+  payload_sweep_seconds: Number(process.env.PAYLOAD_SWEEP_SECONDS),
   target_requests_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_messages_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_connection_rate: Number(process.env.TARGET_CONNECTION_RATE),
@@ -190,7 +196,7 @@ go build -o "$COLLECTOR_BIN" "$ROOT_DIR/collector/cmd/collector"
 ) > "$RUN_WORK_DIR/collector.log" 2>&1 &
 COLLECTOR_PID="$!"
 
-echo "running loadgen: ${BASELINE_SECONDS}s baseline, connection target(s) [$CONNECTION_TARGETS] at ${TARGET_CONNECTION_RATE} conn/s, ${SETTLE_SECONDS}s settle, ramping to ${REQUESTS_PER_SECOND} req/s over ${TRAFFIC_SECONDS}s, ${STABILIZE_SECONDS}s stabilize, ${COOLDOWN_SECONDS}s cooldown"
+echo "running loadgen: ${BASELINE_SECONDS}s baseline, connection target(s) [$CONNECTION_TARGETS] at ${TARGET_CONNECTION_RATE} conn/s, ${SETTLE_SECONDS}s settle, ramping to ${REQUESTS_PER_SECOND} req/s over ${TRAFFIC_SECONDS}s, payload sweep [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each, ${STABILIZE_SECONDS}s stabilize, ${COOLDOWN_SECONDS}s cooldown"
 go build -o "$LOADGEN_BIN" "$ROOT_DIR/loadgen/cmd/loadgen"
 LOADGEN_STATUS=0
 set +e
@@ -199,6 +205,8 @@ set +e
     --urls "$URLS" \
     --connection-targets "$CONNECTION_TARGETS" \
     --payload-bytes "$PAYLOAD_BYTES" \
+    --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
+    --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
     --requests-per-second "$REQUESTS_PER_SECOND" \
     --target-connection-rate "$TARGET_CONNECTION_RATE" \
     --baseline-seconds "$BASELINE_SECONDS" \

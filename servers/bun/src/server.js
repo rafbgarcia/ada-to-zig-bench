@@ -1,5 +1,7 @@
 import { createWriteStream } from 'node:fs';
 
+const maxBodyBytes = 1 << 20;
+
 const host = process.env.HOST ?? '127.0.0.1';
 const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
 const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
@@ -68,8 +70,12 @@ async function handleRequest(req) {
   activeRequests += 1;
   requestsStarted += 1;
   try {
-    const request = await req.json();
-    if (!Number.isSafeInteger(request.id) || typeof request.payload !== 'string') {
+    const body = await req.text();
+    if (Buffer.byteLength(body) > maxBodyBytes) {
+      throw new Error('body_too_large');
+    }
+    const request = JSON.parse(body);
+    if (!Number.isSafeInteger(request.id) || request.id < 0 || typeof request.payload !== 'string') {
       totalErrors += 1;
       recordResponse(400);
       writeServerEvent('request_error', { reason: 'invalid_request', status_code: 400 });
@@ -81,33 +87,37 @@ async function handleRequest(req) {
   } catch (error) {
     totalErrors += 1;
     recordResponse(400);
-    writeServerEvent('request_error', { reason: error?.message || 'invalid_json', status_code: 400 });
-    return jsonResponse({ error: 'invalid_json' }, 400);
+    const reason = error?.message === 'body_too_large' ? 'body_too_large' : 'invalid_json';
+    writeServerEvent('request_error', { reason, status_code: 400 });
+    return jsonResponse({ error: reason }, 400);
   } finally {
     activeRequests -= 1;
   }
 }
 
 function responseFor(request) {
-  const payload = request.payload;
+  const payload = Buffer.from(request.payload);
   let checksum = 2166136261;
-  for (let index = 0; index < payload.length; index += 1) {
-    checksum ^= payload.charCodeAt(index);
+  for (let index = 0; index < payload.byteLength; index += 1) {
+    checksum ^= payload[index];
     checksum = Math.imul(checksum, 16777619) >>> 0;
   }
 
   return {
     id: request.id,
-    len: Buffer.byteLength(payload),
+    len: payload.byteLength,
     checksum,
   };
 }
 
 function jsonResponse(value, status = 200) {
-  return Response.json(value, {
+  const body = JSON.stringify(value);
+  return new Response(body, {
     status,
     headers: {
-      connection: 'keep-alive',
+      'connection': 'keep-alive',
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body).toString(),
     },
   });
 }

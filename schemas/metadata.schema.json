@@ -15,6 +15,8 @@
     "connection_targets": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
     "scenarios": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
     "payload_bytes": { "type": "integer", "minimum": 0 },
+    "payload_sweep_bytes": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+    "payload_sweep_seconds": { "type": "integer", "minimum": 0 },
     "target_requests_per_second": { "type": "integer", "minimum": 0 },
     "target_messages_per_second": { "type": "integer", "minimum": 0 },
     "target_connection_rate": { "type": "integer", "minimum": 1 },

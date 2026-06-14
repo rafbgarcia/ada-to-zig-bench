@@ -32,6 +32,11 @@ export function formatLatency(value) {
   return `${formatFixed(value, 2)} ms`;
 }
 
+export function formatRatio(value, digits = 2) {
+  if (value == null || !Number.isFinite(Number(value))) return '--';
+  return Number(value).toFixed(digits);
+}
+
 export function formatDuration(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const minutes = Math.floor(total / 60);

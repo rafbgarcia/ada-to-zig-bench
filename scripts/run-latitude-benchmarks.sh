@@ -33,6 +33,8 @@ SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
 BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
+PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
+PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
 BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
@@ -84,6 +86,8 @@ Environment:
   SERVER_NAMES                optional space-separated servers; auto-detected by default
   BENCHMARK_CONNECTIONS       default: "1000000" connection target
   PAYLOAD_BYTES               default: 256
+  PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 16384" post-ramp payload sizes
+  PAYLOAD_SWEEP_SECONDS       default: 5 per post-ramp payload size
   REQUESTS_PER_SECOND         default: 100000 final request rate
   TARGET_CONNECTION_RATE      default: 50000
   REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
@@ -213,6 +217,7 @@ main() {
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
   log "connection target(s): ${SCENARIO_CONNECTIONS[*]}; final request rate: ${REQUESTS_PER_SECOND}/s"
+  log "payload sweep: [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each after request-rate ramp"
   log "server target ports: $REMOTE_PORTS"
 
   create_infrastructure
@@ -232,15 +237,28 @@ benchmark_complete() {
 
   [[ -f "$metadata" && -f "$summary" ]] || return 1
 
-  jq -e --argjson expected "$(scenario_json)" '
+  jq -e \
+    --argjson expected "$(scenario_json)" \
+    --argjson expectedPayloadBytes "$PAYLOAD_BYTES" \
+    --argjson expectedTargetRPS "$REQUESTS_PER_SECOND" \
+    --argjson expectedSweep "$(payload_sweep_json)" \
+    --argjson expectedSweepSeconds "$PAYLOAD_SWEEP_SECONDS" '
     (.connection_targets // .scenarios // []) as $actual
     | ($actual | type) == "array"
     and (($actual | map(if type == "object" then .target_connections // .connections else . end) | sort) == ($expected | sort))
+    and ((.payload_bytes // -1) == $expectedPayloadBytes)
+    and ((.target_requests_per_second // .target_messages_per_second // -1) == $expectedTargetRPS)
+    and (((.payload_sweep_bytes // []) | sort) == ($expectedSweep | sort))
+    and ((.payload_sweep_seconds // 0) == $expectedSweepSeconds)
   ' "$summary" >/dev/null 2>&1
 }
 
 scenario_json() {
   printf '%s\n' "${SCENARIO_CONNECTIONS[@]}" | jq -cs 'map(tonumber)'
+}
+
+payload_sweep_json() {
+  printf '%s\n' "$PAYLOAD_SWEEP_BYTES" | tr ', ' '\n' | awk 'NF' | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)'
 }
 
 connection_targets_csv() {
@@ -750,6 +768,8 @@ mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git build-essential jq procps unzip xz-utils
+curl -fsSL https://sh.rustup.rs -o /tmp/rustup.sh
+sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
 install -d -m 755 /opt/bun
@@ -758,7 +778,7 @@ ln -sf /opt/bun/bin/bun /usr/local/bin/bun
 curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz -o /tmp/go.tar.gz
 rm -rf /usr/local/go
 tar -C /usr/local -xzf /tmp/go.tar.gz
-export PATH="/usr/local/go/bin:/opt/bun/bin:$PATH"
+export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:$PATH"
 export BUN_INSTALL="/opt/bun"
 cd /opt/bench
 mkdir -p /opt/bench/.tmp
@@ -860,7 +880,7 @@ remote_server_start() {
     'bash -s' <<'REMOTE'
 set -euo pipefail
 ulimit -n "$BENCH_NOFILE"
-export PATH="/usr/local/go/bin:/opt/bun/bin:$PATH"
+export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:$PATH"
 export BUN_INSTALL="/opt/bun"
 cd /opt/bench
 manifest="servers/$SERVER_NAME/bench.json"
@@ -927,6 +947,8 @@ run_loadgen() {
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
     TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
     PAYLOAD_BYTES="$PAYLOAD_BYTES" \
+    PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
+    PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
     BASELINE_SECONDS="$BASELINE_SECONDS" \
     SETTLE_SECONDS="$SETTLE_SECONDS" \
     STABILIZE_SECONDS="$STABILIZE_SECONDS" \
@@ -953,6 +975,8 @@ done
   --urls "$URLS" \
   --connection-targets "$CONNECTION_TARGETS" \
   --payload-bytes "$PAYLOAD_BYTES" \
+  --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
+  --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
   --requests-per-second "$REQUESTS_PER_SECOND" \
   --target-connection-rate "$TARGET_CONNECTION_RATE" \
   --baseline-seconds "$BASELINE_SECONDS" \
@@ -989,6 +1013,8 @@ write_suite_metadata() {
   LATITUDE_LOADGEN_PLAN="$LATITUDE_LOADGEN_PLAN" \
   REMOTE_PORTS="$REMOTE_PORTS" \
   CONNECTION_TARGETS="${SCENARIO_CONNECTIONS[*]}" \
+  PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
+  PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
   node <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1013,6 +1039,8 @@ const metadata = {
   connections: summary.connections ?? Math.max(...connectionTargets),
   connection_targets: summary.connection_targets ?? connectionTargets,
   payload_bytes: summary.payload_bytes ?? null,
+  payload_sweep_bytes: summary.payload_sweep_bytes ?? process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
+  payload_sweep_seconds: summary.payload_sweep_seconds ?? Number(process.env.PAYLOAD_SWEEP_SECONDS),
   target_requests_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_messages_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_connection_rate: summary.target_connection_rate ?? null,

@@ -403,6 +403,49 @@ p {
   gap: 12px;
 }
 
+/* ---- Summary ----------------------------------------------------------- */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.summary-item {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 9px 10px;
+}
+
+.summary-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 740;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.summary-item strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.summary-warn strong {
+  color: #b45309;
+}
+
+.summary-bad strong {
+  color: var(--danger);
+}
+
 /* ---- Chart cards ------------------------------------------------------- */
 
 .chart-card {

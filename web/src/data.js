@@ -12,13 +12,13 @@ export const metricGroups = [
   },
   {
     id: 'work',
-    title: 'Server Work',
-    description: 'Requests started, responses completed, and in-flight requests as reported by the server implementation.',
+    title: 'Request Work',
+    description: 'Client-observed success rate, server responses, and in-flight requests.',
     unit: '/s',
     dualAxis: true,
     series: [
-      { key: 'serverRequestsPerSecond', label: 'Requests started', color: '#2563eb', unit: '/s' },
-      { key: 'serverResponsesPerSecond', label: 'Responses completed', color: '#0f766e', unit: '/s' },
+      { key: 'loadgenReceivedPerSecond', label: 'Success RPS', color: '#2563eb', unit: '/s' },
+      { key: 'serverResponsesPerSecond', label: 'Server responses', color: '#0f766e', unit: '/s' },
       { key: 'activeRequests', label: 'In flight', color: '#7c3aed', axis: 'right' },
     ],
   },
@@ -41,6 +41,17 @@ export const metricGroups = [
     series: [
       { key: 'openFds', label: 'Open FDs', color: '#334155' },
       { key: 'threads', label: 'Threads', color: '#7c3aed' },
+    ],
+  },
+  {
+    id: 'efficiency',
+    title: 'Resource Efficiency',
+    description: 'Derived resource cost normalized by live connection and request volume.',
+    unit: '',
+    series: [
+      { key: 'rssMbPer10kConnections', label: 'RSS / 10k conns', color: '#0891b2', unit: 'MB' },
+      { key: 'fdsPerConnection', label: 'FDs / conn', color: '#334155' },
+      { key: 'cpuPercentPer10kRps', label: 'CPU% / 10k RPS', color: '#b42318', unit: '%' },
     ],
   },
   {
@@ -87,6 +98,7 @@ export const phaseColors = {
   settle: '#dcfce7',
   traffic: '#ffedd5',
   stabilize: '#ede9fe',
+  payload_sweep: '#ccfbf1',
   cooldown: '#f2f4f7',
   unknown: '#f8fafc',
 };
@@ -243,6 +255,7 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       stageIndex: numberValue(loadgen.stage_index, -1),
       targetConnections: nullableNumber(loadgen.target_connections),
       targetRequestsPerSecond: nullableNumber(loadgen.target_requests_per_second),
+      payloadBytes: nullableNumber(loadgen.payload_bytes),
       loadgenConnections: nullableNumber(loadgen.active_connections),
       serverConnections: nullableNumber(activity.active_connections ?? server.tcp_established),
       activeRequests: numberValue(activity.active_requests),
@@ -267,6 +280,12 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       heapUsedMb: numberValue(runtime.heap_used_mb),
       heapTotalMb: numberValue(runtime.heap_total_mb),
     });
+    const row = rows[rows.length - 1];
+    const normalizedConnections = row.loadgenConnections || row.serverConnections || row.tcpEstablished || 0;
+    const successfulRps = row.loadgenReceivedPerSecond || row.serverResponsesPerSecond || 0;
+    row.rssMbPer10kConnections = normalizedConnections > 0 ? row.rssMb / (normalizedConnections / 10000) : null;
+    row.fdsPerConnection = normalizedConnections > 0 && row.openFds != null ? row.openFds / normalizedConnections : null;
+    row.cpuPercentPer10kRps = successfulRps > 0 ? row.cpuPercent / (successfulRps / 10000) : null;
   }
 
   return rows;
