@@ -247,12 +247,11 @@ benchmark_complete() {
     | (($expected | max) // 0) as $maxExpected
     | ($actual | type) == "array"
     and (($actual | map(if type == "object" then .target_connections // .connections else . end) | sort) == ($expected | sort))
-    and ((.success // false) == true)
-    and ((.peak_active_connections // 0) >= $maxExpected)
     and ((.payload_bytes // -1) == $expectedPayloadBytes)
     and ((.target_requests_per_second // .target_messages_per_second // -1) == $expectedTargetRPS)
     and (((.payload_sweep_bytes // []) | sort) == ($expectedSweep | sort))
     and ((.payload_sweep_seconds // 0) == $expectedSweepSeconds)
+    and (((.complete // false) == true) or ((.success // false) == true) or ((.peak_active_connections // 0) >= $maxExpected))
   ' "$summary" >/dev/null 2>&1
 }
 
@@ -866,11 +865,13 @@ run_server_suite() {
   rm -rf "servers/$server/benchmark"
   mv "$local_work_dir" "servers/$server/benchmark"
   log "wrote servers/$server/benchmark"
-  if (( status != 0 )); then
-    fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
-  fi
   if (( artifact_status != 0 )); then
     fail "suite completed for $server but loadgen artifacts were incomplete; artifacts were preserved"
+  fi
+  if (( status == 2 )); then
+    log "suite completed for $server with a target miss; artifacts were preserved"
+  elif (( status != 0 )); then
+    fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
   fi
 }
 

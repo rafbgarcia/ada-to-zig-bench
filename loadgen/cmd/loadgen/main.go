@@ -81,6 +81,7 @@ type summary struct {
 	TotalErrors             uint64         `json:"total_errors"`
 	TotalDispatchMisses     uint64         `json:"total_dispatch_misses"`
 	PeakActiveConnections   int64          `json:"peak_active_connections"`
+	Complete                bool           `json:"complete"`
 	Success                 bool           `json:"success"`
 	P50LatencyMS            float64        `json:"p50_latency_ms"`
 	P90LatencyMS            float64        `json:"p90_latency_ms"`
@@ -473,6 +474,7 @@ func main() {
 		TotalErrors:             errorsCount.Load(),
 		TotalDispatchMisses:     dispatchMisses.Load(),
 		PeakActiveConnections:   peak.Load(),
+		Complete:                true,
 		Success:                 peak.Load() >= int64(maxConnections),
 		P50LatencyMS:            overallP50,
 		P90LatencyMS:            overallP90,

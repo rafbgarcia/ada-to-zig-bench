@@ -321,6 +321,8 @@ function RunSummary({ loaded }) {
 
   return (
     <div className="summary-grid">
+      <SummaryItem label="Target" value={stats.targetStatus} tone={stats.success ? undefined : 'bad'} />
+      <SummaryItem label="Peak conns" value={`${formatCompact(stats.peakConnections)} / ${formatCompact(stats.targetConnections)}`} tone={stats.success ? undefined : 'warn'} />
       <SummaryItem label="Peak RSS" value={`${formatFixed(stats.peakRssMb, 1)} MB`} />
       <SummaryItem label="RSS / 10k conns" value={`${formatFixed(stats.peakRssPer10k, 1)} MB`} />
       <SummaryItem label="Avg CPU traffic" value={`${formatFixed(stats.avgTrafficCpu, 1)}%`} />
@@ -520,18 +522,29 @@ function formatTargets(values) {
 
 function summarizeRun(loaded) {
   const timeline = loaded?.timeline ?? [];
+  const summary = loaded?.summary ?? {};
+  const connectionTargets = Array.isArray(summary.connection_targets)
+    ? summary.connection_targets.map(Number).filter(Number.isFinite)
+    : [];
+  const targetConnections = Number(summary.connections ?? (connectionTargets.length ? Math.max(...connectionTargets) : 0));
+  const peakConnections = Number(summary.peak_active_connections ?? maxOf(timeline, 'loadgenConnections'));
+  const success = Boolean(summary.success ?? (targetConnections > 0 && peakConnections >= targetConnections));
   const trafficRows = timeline.filter((row) => row.phase === 'traffic' || row.phase === 'payload_sweep');
   const peakRssMb = maxOf(timeline, 'rssMb');
   const peakRssPer10k = maxOf(timeline, 'rssMbPer10kConnections');
   const peakFdsPerConnection = maxOf(timeline, 'fdsPerConnection');
   const avgTrafficCpu = averageOf(trafficRows, 'cpuPercent');
   return {
+    targetStatus: success ? 'Hit' : 'Miss',
+    success,
+    targetConnections,
+    peakConnections,
     peakRssMb,
     peakRssPer10k,
     peakFdsPerConnection,
     avgTrafficCpu,
-    totalErrors: Number(loaded?.summary?.total_errors ?? 0),
-    totalDispatchMisses: Number(loaded?.summary?.total_dispatch_misses ?? 0),
+    totalErrors: Number(summary.total_errors ?? 0),
+    totalDispatchMisses: Number(summary.total_dispatch_misses ?? 0),
   };
 }
 
