@@ -1,0 +1,91 @@
+{
+  "id": "node",
+  "server": "node",
+  "language": "JavaScript",
+  "runtime": "Node.js",
+  "suite": "http-json",
+  "server_command": "node src/server.js",
+  "url": "http://206.223.228.93:8080/json",
+  "urls": [
+    "http://206.223.228.93:8080/json",
+    "http://206.223.228.93:8081/json",
+    "http://206.223.228.93:8082/json",
+    "http://206.223.228.93:8083/json",
+    "http://206.223.228.93:8084/json",
+    "http://206.223.228.93:8085/json",
+    "http://206.223.228.93:8086/json",
+    "http://206.223.228.93:8087/json",
+    "http://206.223.228.93:8088/json",
+    "http://206.223.228.93:8089/json",
+    "http://206.223.228.93:8090/json",
+    "http://206.223.228.93:8091/json",
+    "http://206.223.228.93:8092/json",
+    "http://206.223.228.93:8093/json",
+    "http://206.223.228.93:8094/json",
+    "http://206.223.228.93:8095/json",
+    "http://206.223.228.93:8096/json",
+    "http://206.223.228.93:8097/json",
+    "http://206.223.228.93:8098/json",
+    "http://206.223.228.93:8099/json",
+    "http://206.223.228.93:8100/json",
+    "http://206.223.228.93:8101/json",
+    "http://206.223.228.93:8102/json",
+    "http://206.223.228.93:8103/json",
+    "http://206.223.228.93:8104/json",
+    "http://206.223.228.93:8105/json",
+    "http://206.223.228.93:8106/json",
+    "http://206.223.228.93:8107/json",
+    "http://206.223.228.93:8108/json",
+    "http://206.223.228.93:8109/json",
+    "http://206.223.228.93:8110/json",
+    "http://206.223.228.93:8111/json"
+  ],
+  "connections": 1000000,
+  "connection_targets": [
+    1000000
+  ],
+  "payload_bytes": 256,
+  "payload_sweep_bytes": [
+    256,
+    1024,
+    4096,
+    16384
+  ],
+  "payload_sweep_seconds": 5,
+  "target_requests_per_second": 100000,
+  "target_messages_per_second": 100000,
+  "target_connection_rate": 50000,
+  "baseline_seconds": 0,
+  "settle_seconds": 0,
+  "stabilize_seconds": 0,
+  "traffic_seconds": 10,
+  "cooldown_seconds": 0,
+  "started_at": "2026-06-14T21:15:19Z",
+  "git_commit": "94fd7e5",
+  "benchmark_recommendations": {
+    "topology": "dedicated Latitude server host plus dedicated Latitude loadgen host in the same site",
+    "request_shape": "HTTP/1.1 keep-alive POST /json with JSON parse, validation, checksum, and JSON response serialization",
+    "primary_metrics": [
+      "active_connections",
+      "requests_started_per_second",
+      "responses_completed_per_second",
+      "rss_mb",
+      "cpu_percent",
+      "threads",
+      "open_fds"
+    ],
+    "notes": [
+      "Load generation is isolated from the measured server host.",
+      "Connections are distributed over multiple server ports to avoid client ephemeral-port exhaustion at 1M connections.",
+      "Connection targets are cumulative inside one continuous run so resource growth can be correlated with server activity."
+    ]
+  },
+  "infrastructure": {
+    "provider": "latitude.sh",
+    "site": "ASH",
+    "server_plan": "f4-metal-small",
+    "loadgen_plan": "f4-metal-small",
+    "server_public_ip": "206.223.228.93",
+    "loadgen_public_ip": "45.250.254.135"
+  }
+}
