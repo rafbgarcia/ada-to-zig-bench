@@ -33,9 +33,6 @@ jobs:
       SETTLE_SECONDS: '10'
       TRAFFIC_SECONDS: '120'
       COOLDOWN_SECONDS: '20'
-      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       LATITUDE_SSH_PRIVATE_KEY: ${{ secrets.LATITUDE_SSH_PRIVATE_KEY }}
     steps:
       - name: Check out repository
@@ -60,9 +57,6 @@ jobs:
           test -n "$LATITUDESH_TOKEN"
           test -n "$LATITUDE_SSH_KEYS"
           test -n "$LATITUDE_SSH_PRIVATE_KEY"
-          test -n "$VERCEL_TOKEN"
-          test -n "$VERCEL_ORG_ID"
-          test -n "$VERCEL_PROJECT_ID"
           install -m 700 -d ~/.ssh
           printf '%s\n' "$LATITUDE_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
@@ -74,9 +68,7 @@ jobs:
           "$HOME/.lsh/lsh" --version
 
       - name: Install web and deployment dependencies
-        run: |
-          npm ci --prefix web
-          npm install --global vercel@54.13.0
+        run: npm ci --prefix web
 
       - name: Run missing Latitude benchmarks
         run: scripts/run-latitude-benchmarks.sh
@@ -96,13 +88,3 @@ jobs:
           git add servers
           git commit -m "Update benchmark artifacts [skip ci]"
           git push origin HEAD:main
-
-      - name: Deploy static site to Vercel
-        working-directory: web
-        run: |
-          rm -rf .vercel/output
-          mkdir -p .vercel/output/static
-          cp -R dist/. .vercel/output/static/
-          printf '{"version":3}\n' > .vercel/output/config.json
-          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
-          vercel deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN"
