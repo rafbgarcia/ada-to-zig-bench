@@ -4,34 +4,13 @@ This repository benchmarks language/runtime implementations with a small, repeat
 
 This is not a general language-speed score. It measures the resource cost of one HTTP/1.1 server process holding many long-lived TCP connections while doing a fixed amount of JSON request work.
 
-Suite 1 is `http-json`:
-
-- `POST /json` accepts `{ "id": number, "payload": string }` with a 1 MiB maximum request body.
-- The server parses JSON, validates `id` as a non-negative integer and `payload` as a string, computes 32-bit FNV-1a over the UTF-8 payload bytes, and serializes `{ "id", "len", "checksum" }`.
-- Responses should be JSON with `Content-Length`, `Content-Type: application/json`, and HTTP/1.1 keep-alive.
-- `/health` is used by orchestration.
-- `/runtime` and runtime JSONL files expose runtime-specific memory/GC counters where available.
+Suite 1 is `http-json`. Endpoint behavior, server process rules, manifests, metrics, and fairness requirements are defined in the language-neutral [server implementation contract](docs/server-implementation-contract.md).
 
 The benchmark is intentionally minimal: one server process, persistent HTTP/1.1 connections, a fixed connection ramp to the target, a fixed request-rate ramp to the target, a short payload-size sweep after the target RPS is reached, server activity metrics, and external process metrics for CPU/RSS/threads/open FDs.
 
-## Server Layout
+## Server Implementations
 
-Each implementation lives under `servers/<name>/` and is described by `bench.json`:
-
-```json
-{
-  "id": "node",
-  "language": "JavaScript",
-  "runtime": "Node.js",
-  "suite": "http-json",
-  "install": "",
-  "run": "node src/server.js"
-}
-```
-
-Use `install` for language/package setup needed inside that implementation directory. Keep it empty when the implementation only needs a runtime already installed on the benchmark host.
-
-`ports` is optional in `bench.json`. Runners default to `8080..8111` and pass the chosen list through the `PORTS` environment variable. Implementations should listen on every comma-separated port in `PORTS`; define `ports` in a manifest only when an implementation needs a custom local default.
+Each implementation lives under `servers/<name>/`. To add or review an implementation, use the [server implementation contract](docs/server-implementation-contract.md) as the normative source and run `./scripts/test-server-implementations.sh <server>` before collecting benchmark artifacts.
 
 The current implementations are:
 
@@ -61,7 +40,7 @@ Defaults:
 server:                    node
 connection_target:         "1000000"
 payload_bytes:             256
-payload_sweep_bytes:       "256 1024 4096 16384"
+payload_sweep_bytes:       "256 1024 4096 8192"
 payload_sweep_seconds:     5
 requests/sec:              100000 final target
 work_mode:                 open-loop
@@ -122,7 +101,7 @@ BENCHMARK_CONNECTIONS=1000000
 REQUESTS_PER_SECOND=100000
 WORK_MODE=open-loop
 PAYLOAD_BYTES=256
-PAYLOAD_SWEEP_BYTES="256 1024 4096 16384"
+PAYLOAD_SWEEP_BYTES="256 1024 4096 8192"
 PAYLOAD_SWEEP_SECONDS=5
 TARGET_CONNECTION_RATE=50000
 CONNECTION_RETRIES=3

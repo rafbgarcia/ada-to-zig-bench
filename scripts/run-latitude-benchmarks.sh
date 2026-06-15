@@ -33,7 +33,7 @@ SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
 BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000000}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
-PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
+PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 8192}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
 WORK_MODE="${WORK_MODE:-open-loop}"
@@ -92,7 +92,7 @@ Environment:
   SERVER_NAMES                optional space-separated servers; auto-detected by default
   BENCHMARK_CONNECTIONS       default: "1000000" connection target
   PAYLOAD_BYTES               default: 256
-  PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 16384" post-ramp payload sizes
+  PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 8192" post-ramp payload sizes
   PAYLOAD_SWEEP_SECONDS       default: 5 per post-ramp payload size
   REQUESTS_PER_SECOND         default: 100000 final request rate
   WORK_MODE                   default: open-loop; use fixed-work for same request count per stage
