@@ -150,7 +150,11 @@ The Latitude runner raises Linux limits on both hosts before the measured run. I
 
 ## GitHub Workflow
 
+`.github/workflows/server-implementation-tests.yml` runs on pull requests, pushes to `main`, manual dispatch, and as a reusable workflow. It discovers every `servers/<name>/bench.json` implementation and tests them as a bounded matrix with up to eight jobs in parallel. Each matrix job installs Node.js and Go for the checker/load generator, installs Bun or Rust only when the server manifest needs it, starts the selected implementation on local ports, checks the HTTP JSON contract directly, and runs a tiny load-generator pass. The test artifacts are written under `.tmp/` and do not replace `servers/*/benchmark` results.
+
 Run `.github/workflows/benchmarks.yml` manually. It installs `lsh`, creates Latitude hosts, runs missing benchmark suites, builds the replay UI, deploys to Vercel, and commits new `servers/*/benchmark` artifacts.
+
+The benchmark workflow requires the server implementation tests before checking for missing benchmark artifacts or provisioning Latitude hosts. Docker is not used for this preflight because the benchmark contract is the local server command from `bench.json`, not a container image. Add Docker only if the benchmark runner later starts servers from images or needs to validate image packaging.
 
 Required secrets:
 

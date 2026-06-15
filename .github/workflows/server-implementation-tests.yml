@@ -1,0 +1,107 @@
+name: Server implementation tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/server-implementation-tests.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'loadgen/**'
+      - 'scripts/check-http-json-server.mjs'
+      - 'scripts/prepare-server-dependencies.mjs'
+      - 'scripts/test-server-implementations.sh'
+      - 'servers/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/server-implementation-tests.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'loadgen/**'
+      - 'scripts/check-http-json-server.mjs'
+      - 'scripts/prepare-server-dependencies.mjs'
+      - 'scripts/test-server-implementations.sh'
+      - 'servers/**'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  discover-server-implementations:
+    runs-on: ubuntu-24.04
+    outputs:
+      servers: ${{ steps.servers.outputs.servers }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Discover server implementations
+        id: servers
+        run: |
+          mapfile -t servers < <(find servers -mindepth 2 -maxdepth 2 -name bench.json -exec dirname {} \; | xargs -n 1 basename | sort)
+
+          if [ "${#servers[@]}" -eq 0 ]; then
+            echo "No server implementations found." >&2
+            exit 1
+          fi
+
+          printf 'Discovered server implementations:\n'
+          printf '  %s\n' "${servers[@]}"
+
+          servers_json="$(printf '%s\n' "${servers[@]}" | jq -R -s -c 'split("\n")[:-1]')"
+          echo "servers=$servers_json" >> "$GITHUB_OUTPUT"
+
+  test-server-implementation:
+    needs: discover-server-implementations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    name: Test ${{ matrix.server }}
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        server: ${{ fromJson(needs.discover-server-implementations.outputs.servers) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Read server manifest
+        id: manifest
+        run: |
+          node - "${{ matrix.server }}" <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+          const server = process.argv[2];
+          const manifest = JSON.parse(fs.readFileSync(`servers/${server}/bench.json`, 'utf8'));
+          const text = [manifest.language, manifest.runtime, manifest.install, manifest.run]
+            .filter(Boolean)
+            .join('\n')
+            .toLowerCase();
+          const toolchains = [];
+          if (/\bbun\b/.test(text)) toolchains.push('bun');
+          if (/\brust\b|\bcargo\b/.test(text)) toolchains.push('rust');
+          console.log(`toolchains=${toolchains.join(',')}`);
+          NODE
+
+      - name: Set up Bun
+        if: contains(steps.manifest.outputs.toolchains, 'bun')
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Rust
+        if: contains(steps.manifest.outputs.toolchains, 'rust')
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run server implementation tests
+        run: scripts/test-server-implementations.sh "${{ matrix.server }}"
