@@ -9,6 +9,7 @@ on:
       - 'loadgen/**'
       - 'scripts/check-http-json-server.mjs'
       - 'scripts/prepare-server-dependencies.mjs'
+      - 'scripts/setup-toolchains.sh'
       - 'scripts/test-server-implementations.sh'
       - 'servers/**'
   push:
@@ -21,6 +22,7 @@ on:
       - 'loadgen/**'
       - 'scripts/check-http-json-server.mjs'
       - 'scripts/prepare-server-dependencies.mjs'
+      - 'scripts/setup-toolchains.sh'
       - 'scripts/test-server-implementations.sh'
       - 'servers/**'
   workflow_dispatch:
@@ -85,13 +87,7 @@ jobs:
           const fs = require('node:fs');
           const server = process.argv[2];
           const manifest = JSON.parse(fs.readFileSync(`servers/${server}/bench.json`, 'utf8'));
-          const text = [manifest.language, manifest.runtime, manifest.install, manifest.run]
-            .filter(Boolean)
-            .join('\n')
-            .toLowerCase();
-          const toolchains = [];
-          if (/\bbun\b/.test(text)) toolchains.push('bun');
-          if (/\brust\b|\bcargo\b/.test(text)) toolchains.push('rust');
+          const toolchains = (manifest.toolchains || []).map(String);
           console.log(`toolchains=${toolchains.join(',')}`);
           NODE
 
@@ -102,6 +98,25 @@ jobs:
       - name: Set up Rust
         if: contains(steps.manifest.outputs.toolchains, 'rust')
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Zig
+        if: contains(steps.manifest.outputs.toolchains, 'zig')
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Set up .NET
+        if: contains(steps.manifest.outputs.toolchains, 'csharp')
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up manifest toolchains
+        run: |
+          if [ -n "${{ steps.manifest.outputs.toolchains }}" ]; then
+            IFS=',' read -r -a toolchains <<< "${{ steps.manifest.outputs.toolchains }}"
+            sudo bash scripts/setup-toolchains.sh "${toolchains[@]}"
+          fi
 
       - name: Run server implementation tests
         run: scripts/test-server-implementations.sh "${{ matrix.server }}"

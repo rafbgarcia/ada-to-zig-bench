@@ -1,0 +1,11 @@
+{
+  "id": "csharp-aspnetcore",
+  "language": "C#",
+  "runtime": ".NET ASP.NET Core Kestrel",
+  "suite": "http-json",
+  "toolchains": ["csharp"],
+  "implementation": "ASP.NET Core minimal API + Kestrel",
+  "concurrency": "async thread-pool",
+  "install": "dotnet publish -c Release -o out --nologo",
+  "run": "dotnet out/Bench.CSharp.AspNetCore.dll"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "ada-gnat",
+  "language": "Ada",
+  "runtime": "GNAT + GNAT.Sockets + GNATCOLL.JSON",
+  "suite": "http-json",
+  "toolchains": ["ada"],
+  "implementation": "GNAT.Sockets + GNATCOLL.JSON",
+  "concurrency": "task-per-connection",
+  "install": "mkdir -p obj && gprbuild -p -P bench_ada_gnat.gpr",
+  "run": "./server"
+}

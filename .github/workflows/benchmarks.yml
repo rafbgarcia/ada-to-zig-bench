@@ -11,11 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  test-server-implementations:
-    uses: ./.github/workflows/server-implementation-tests.yml
-
   check-missing-benchmarks:
-    needs: test-server-implementations
     runs-on: ubuntu-24.04
     outputs:
       has-missing-benchmarks: ${{ steps.missing-benchmarks.outputs.has-missing-benchmarks }}

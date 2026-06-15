@@ -1,0 +1,11 @@
+{
+  "id": "go-nethttp",
+  "language": "Go",
+  "runtime": "Go net/http",
+  "suite": "http-json",
+  "toolchains": ["go"],
+  "implementation": "net/http",
+  "concurrency": "goroutine-per-connection",
+  "install": "go build -o ./bin/server .",
+  "run": "./bin/server"
+}

@@ -3,6 +3,9 @@
   "language": "JavaScript",
   "runtime": "Node.js",
   "suite": "http-json",
+  "toolchains": ["node"],
+  "implementation": "node:http",
+  "concurrency": "event-loop",
   "install": "",
   "run": "node src/server.js"
 }

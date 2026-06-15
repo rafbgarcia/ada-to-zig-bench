@@ -14,14 +14,29 @@ Each implementation lives under `servers/<name>/`. To add or review an implement
 
 The current implementations are:
 
+- `servers/ada-gnat`: Ada GNAT.Sockets server using GNATCOLL.JSON
 - `servers/node`: Node.js stdlib HTTP server
 - `servers/bun`: Bun native HTTP server
+- `servers/c-libmicrohttpd`: C server using libmicrohttpd and jansson
+- `servers/cpp-boost-beast`: C++ Boost.Beast/Asio server using nlohmann-json
+- `servers/csharp-aspnetcore`: C# ASP.NET Core minimal API server on Kestrel
+- `servers/go-nethttp`: Go stdlib `net/http` server
+- `servers/java-httpserver`: Java JDK `HttpServer` using Gson
+- `servers/python-aiohttp`: Python `aiohttp.web` server
+- `servers/ruby-webrick`: Ruby WEBrick server
 - `servers/rust-hyper-tokio-st`: Rust Hyper HTTP/1.1 server on a single-thread Tokio runtime
 - `servers/rust-hyper-tokio-mt`: Rust Hyper HTTP/1.1 server on a multi-thread Tokio runtime
+- `servers/zig-std`: Zig `std.http.Server` server
 
 ## Local Smoke Test
 
-Requirements: Go 1.24, Node.js 24, Bun if running `servers/bun`, and Rust stable if running the Rust servers.
+Requirements: Go 1.24 and Node.js 24 for the harness, plus the toolchains listed in the selected server's `bench.json`. On Ubuntu, `sudo bash scripts/setup-toolchains.sh <toolchain ...>` installs the repository's known toolchain/dependency set. When no toolchains are supplied, it reads every server manifest.
+
+To validate a server implementation without collecting benchmark artifacts:
+
+```sh
+./scripts/test-server-implementations.sh go-nethttp
+```
 
 ```sh
 go mod download
@@ -129,7 +144,7 @@ The Latitude runner raises Linux limits on both hosts before the measured run. I
 
 ## GitHub Workflow
 
-`.github/workflows/server-implementation-tests.yml` runs on pull requests, pushes to `main`, manual dispatch, and as a reusable workflow. It discovers every `servers/<name>/bench.json` implementation and tests them as a bounded matrix with up to eight jobs in parallel. Each matrix job installs Node.js and Go for the checker/load generator, installs Bun or Rust only when the server manifest needs it, starts the selected implementation on local ports, checks the HTTP JSON contract directly, and runs a tiny load-generator pass. The test artifacts are written under `.tmp/` and do not replace `servers/*/benchmark` results.
+`.github/workflows/server-implementation-tests.yml` runs on pull requests, pushes to `main`, manual dispatch, and as a reusable workflow. It discovers every `servers/<name>/bench.json` implementation and tests them as a bounded matrix with up to eight jobs in parallel. Each matrix job installs Node.js and Go for the checker/load generator, provisions the selected server's manifest-declared toolchains, starts the implementation on local ports, checks the HTTP JSON contract directly, and runs a tiny load-generator pass. The test artifacts are written under `.tmp/` and do not replace `servers/*/benchmark` results.
 
 Run `.github/workflows/benchmarks.yml` manually. It installs `lsh`, creates Latitude hosts, runs missing benchmark suites, builds the replay UI, deploys to Vercel, and commits new `servers/*/benchmark` artifacts.
 

@@ -1,0 +1,11 @@
+{
+  "id": "ruby-webrick",
+  "language": "Ruby",
+  "runtime": "Ruby + WEBrick",
+  "suite": "http-json",
+  "toolchains": ["ruby"],
+  "implementation": "WEBrick",
+  "concurrency": "thread-per-connection",
+  "install": "",
+  "run": "ruby server.rb"
+}

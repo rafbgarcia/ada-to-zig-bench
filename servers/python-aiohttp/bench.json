@@ -1,0 +1,11 @@
+{
+  "id": "python-aiohttp",
+  "language": "Python",
+  "runtime": "CPython + aiohttp",
+  "suite": "http-json",
+  "toolchains": ["python"],
+  "implementation": "aiohttp.web",
+  "concurrency": "asyncio event-loop",
+  "install": "python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt",
+  "run": ".venv/bin/python server.py"
+}

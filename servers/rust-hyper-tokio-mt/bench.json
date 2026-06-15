@@ -3,6 +3,9 @@
   "language": "Rust",
   "runtime": "Hyper + Tokio multi-thread",
   "suite": "http-json",
+  "toolchains": ["rust"],
+  "implementation": "hyper + tokio",
+  "concurrency": "multi-thread event-loop",
   "install": "cargo build --release --locked",
   "run": "./target/release/bench-rust-hyper-tokio-mt"
 }

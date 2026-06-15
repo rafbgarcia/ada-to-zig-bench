@@ -96,15 +96,13 @@ run_server_test() {
   install_command="$(manifest_field "$manifest" install)"
   [[ -n "$run_command" ]] || fail "$manifest is missing a run command"
 
-  case "$run_command" in
-    *bun*) require_command bun ;;
-  esac
+  require_toolchains "$manifest"
 
   mkdir -p "$run_dir"
   log "testing $server"
   if [[ -n "$install_command" ]]; then
     log "installing $server dependencies: $install_command"
-    (cd "$server_dir" && bash -lc "$install_command")
+    (cd "$server_dir" && bash -c "$install_command")
   fi
 
   start_server "$server" "$server_dir" "$run_command" "$ports" "$run_dir"
@@ -161,7 +159,7 @@ start_server() {
       ACTIVITY_METRICS_PATH="$run_dir/activity_metrics.jsonl" \
       SERVER_EVENTS_PATH="$run_dir/server_events.jsonl" \
       RUNTIME_METRICS_PATH="$run_dir/runtime_metrics.jsonl" \
-      bash -lc "$run_command"
+      bash -c "$run_command"
   ) > "$SERVER_LOG" 2>&1 &
   SERVER_PID="$!"
 
@@ -191,7 +189,34 @@ wait_for_health() {
 manifest_field() {
   local manifest="$1"
   local field="$2"
-  node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m[process.argv[2]] || '');" "$manifest" "$field"
+  node scripts/manifest-field.mjs "$manifest" "$field"
+}
+
+require_toolchains() {
+  local manifest="$1"
+  local toolchains toolchain
+  toolchains="$(manifest_field "$manifest" toolchains)"
+  IFS=',' read -r -a TOOLCHAIN_ARRAY <<<"$toolchains"
+
+  for toolchain in "${TOOLCHAIN_ARRAY[@]}"; do
+    toolchain="${toolchain//[[:space:]]/}"
+    [[ -n "$toolchain" ]] || continue
+    case "$toolchain" in
+      ada) require_command gprbuild ;;
+      bun) require_command bun ;;
+      c) require_command cc ; require_command pkg-config ;;
+      cpp) require_command c++ ; require_command pkg-config ;;
+      csharp) require_command dotnet ;;
+      go) require_command go ;;
+      java) require_command java ; require_command javac ;;
+      node) require_command node ;;
+      python) require_command python3 ;;
+      ruby) require_command ruby ;;
+      rust) require_command cargo ;;
+      zig) require_command zig ;;
+      *) fail "unknown toolchain '$toolchain' in $manifest" ;;
+    esac
+  done
 }
 
 base_urls() {

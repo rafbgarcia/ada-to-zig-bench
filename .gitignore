@@ -1,6 +1,14 @@
 node_modules/
 dist/
 bin/
+obj/
+.venv/
+.zig-cache/
+zig-out/
+out/
+target/
+server
+servers/java-httpserver/lib/*.jar
 .tmp/
 runs/*
 !runs/.gitkeep

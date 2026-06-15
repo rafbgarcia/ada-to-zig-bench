@@ -56,13 +56,16 @@ require_command go
 require_command node
 
 SERVER_DIR="$ROOT_DIR/servers/$SERVER_NAME"
-SERVER_ID="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.id || process.argv[2]);" "$MANIFEST" "$SERVER_NAME")"
-SERVER_LANGUAGE="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.language || '');" "$MANIFEST")"
-SERVER_RUNTIME="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.runtime || '');" "$MANIFEST")"
-SERVER_SUITE="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.suite || 'http-json');" "$MANIFEST")"
-SERVER_COMMAND_DISPLAY="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.run || '');" "$MANIFEST")"
+SERVER_ID="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" id "$SERVER_NAME")"
+SERVER_LANGUAGE="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" language)"
+SERVER_RUNTIME="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" runtime)"
+SERVER_TOOLCHAINS="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" toolchains)"
+SERVER_IMPLEMENTATION="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" implementation)"
+SERVER_CONCURRENCY="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" concurrency)"
+SERVER_SUITE="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" suite http-json)"
+SERVER_COMMAND_DISPLAY="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" run)"
 SERVER_PORTS="$(DEFAULT_SERVER_PORTS="$DEFAULT_SERVER_PORTS" node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log((m.ports || process.env.DEFAULT_SERVER_PORTS.split(',').map(Number)).join(','));" "$MANIFEST")"
-INSTALL_COMMAND="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.install || '');" "$MANIFEST")"
+INSTALL_COMMAND="$(node "$ROOT_DIR/scripts/manifest-field.mjs" "$MANIFEST" install)"
 
 if [[ -z "$SERVER_COMMAND_DISPLAY" ]]; then
   echo "servers/$SERVER_NAME/bench.json is missing a run command" >&2
@@ -71,7 +74,7 @@ fi
 
 if [[ -n "$INSTALL_COMMAND" ]]; then
   echo "installing dependencies for $SERVER_NAME"
-  (cd "$SERVER_DIR" && bash -lc "$INSTALL_COMMAND")
+  (cd "$SERVER_DIR" && bash -c "$INSTALL_COMMAND")
 fi
 
 RUN_DIR="$SERVER_DIR/benchmark"
@@ -118,6 +121,9 @@ SERVER_ID="$SERVER_ID" \
 SERVER_NAME="$SERVER_NAME" \
 SERVER_LANGUAGE="$SERVER_LANGUAGE" \
 SERVER_RUNTIME="$SERVER_RUNTIME" \
+SERVER_TOOLCHAINS="$SERVER_TOOLCHAINS" \
+SERVER_IMPLEMENTATION="$SERVER_IMPLEMENTATION" \
+SERVER_CONCURRENCY="$SERVER_CONCURRENCY" \
 SERVER_SUITE="$SERVER_SUITE" \
 SERVER_COMMAND_DISPLAY="$SERVER_COMMAND_DISPLAY" \
 FIRST_URL="http://$HOST:$FIRST_PORT/json" \
@@ -145,6 +151,9 @@ const metadata = {
   server: process.env.SERVER_NAME,
   language: process.env.SERVER_LANGUAGE || null,
   runtime: process.env.SERVER_RUNTIME || null,
+  toolchains: process.env.SERVER_TOOLCHAINS.split(',').map((item) => item.trim()).filter(Boolean),
+  implementation: process.env.SERVER_IMPLEMENTATION || null,
+  concurrency: process.env.SERVER_CONCURRENCY || null,
   suite: process.env.SERVER_SUITE || 'http-json',
   server_command: process.env.SERVER_COMMAND_DISPLAY,
   url: process.env.FIRST_URL,
@@ -180,7 +189,7 @@ echo "starting $SERVER_NAME server"
     ACTIVITY_METRICS_PATH="$RUN_WORK_DIR/activity_metrics.jsonl" \
     SERVER_EVENTS_PATH="$RUN_WORK_DIR/server_events.jsonl" \
     RUNTIME_METRICS_PATH="$RUN_WORK_DIR/runtime_metrics.jsonl" \
-    bash -lc "$SERVER_COMMAND_DISPLAY"
+    bash -c "$SERVER_COMMAND_DISPLAY"
 ) > "$RUN_WORK_DIR/server.log" 2>&1 &
 SERVER_PID="$!"
 

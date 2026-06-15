@@ -28,7 +28,7 @@ for (const entry of entries) {
 
 function run(command, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', ['-lc', command], {
+    const child = spawn('bash', ['-c', command], {
       cwd,
       stdio: 'inherit',
       env: process.env,

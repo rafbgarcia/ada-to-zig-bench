@@ -1,0 +1,11 @@
+{
+  "id": "zig-std",
+  "language": "Zig",
+  "runtime": "Zig std.http.Server",
+  "suite": "http-json",
+  "toolchains": ["zig"],
+  "implementation": "std.http.Server",
+  "concurrency": "thread-per-connection",
+  "install": "mkdir -p zig-out/bin && zig build-exe src/main.zig -O ReleaseFast -lc -femit-bin=zig-out/bin/bench-zig-std",
+  "run": "./zig-out/bin/bench-zig-std"
+}

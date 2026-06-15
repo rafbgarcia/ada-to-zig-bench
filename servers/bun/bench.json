@@ -3,6 +3,9 @@
   "language": "JavaScript",
   "runtime": "Bun",
   "suite": "http-json",
+  "toolchains": ["bun"],
+  "implementation": "Bun.serve",
+  "concurrency": "event-loop",
   "install": "",
   "run": "bun src/server.js"
 }

@@ -1,0 +1,11 @@
+{
+  "id": "cpp-boost-beast",
+  "language": "C++",
+  "runtime": "C++ Boost.Beast + nlohmann-json",
+  "suite": "http-json",
+  "toolchains": ["cpp"],
+  "implementation": "Boost.Beast + nlohmann-json",
+  "concurrency": "thread-per-connection",
+  "install": "c++ -O3 -std=c++20 -Wall -Wextra -pthread $(test -d /opt/homebrew/include && printf ' -I/opt/homebrew/include') -o server src/server.cpp $(pkg-config --cflags --libs nlohmann_json)",
+  "run": "./server"
+}

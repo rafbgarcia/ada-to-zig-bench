@@ -801,19 +801,10 @@ mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git build-essential jq procps unzip xz-utils
-curl -fsSL https://sh.rustup.rs -o /tmp/rustup.sh
-sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable
-curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-install -d -m 755 /opt/bun
-curl -fsSL https://bun.sh/install | BUN_INSTALL=/opt/bun bash
-ln -sf /opt/bun/bin/bun /usr/local/bin/bun
-curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz -o /tmp/go.tar.gz
-rm -rf /usr/local/go
-tar -C /usr/local -xzf /tmp/go.tar.gz
-export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:$PATH"
-export BUN_INSTALL="/opt/bun"
 cd /opt/bench
+bash scripts/setup-toolchains.sh
+export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:/opt/dotnet:$PATH"
+export BUN_INSTALL="/opt/bun"
 mkdir -p /opt/bench/.tmp
 node scripts/prepare-server-dependencies.mjs
 go build -o /opt/bench/.tmp/collector ./collector/cmd/collector
@@ -915,12 +906,13 @@ remote_server_start() {
     'bash -s' <<'REMOTE'
 set -euo pipefail
 ulimit -n "$BENCH_NOFILE"
-export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:$PATH"
+export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:/opt/dotnet:$PATH"
 export BUN_INSTALL="/opt/bun"
+export DOTNET_ROOT="/opt/dotnet"
 cd /opt/bench
 manifest="servers/$SERVER_NAME/bench.json"
 test -f "$manifest"
-run_command="$(node -e "const fs=require('node:fs'); const m=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(m.run || '');" "$manifest")"
+run_command="$(node scripts/manifest-field.mjs "$manifest" run)"
 test -n "$run_command"
 rm -rf .tmp/cloud-server
 mkdir -p .tmp/cloud-server
@@ -930,7 +922,7 @@ mkdir -p .tmp/cloud-server
     ACTIVITY_METRICS_PATH="/opt/bench/.tmp/cloud-server/activity_metrics.jsonl" \
     SERVER_EVENTS_PATH="/opt/bench/.tmp/cloud-server/server_events.jsonl" \
     RUNTIME_METRICS_PATH="/opt/bench/.tmp/cloud-server/runtime_metrics.jsonl" \
-    bash -lc "$run_command"
+    bash -c "$run_command"
 ) > /opt/bench/.tmp/cloud-server/server.log 2>&1 &
 echo "$!" > /opt/bench/.tmp/cloud-server/server.pid
 first_port="${PORTS%%,*}"
@@ -1095,6 +1087,9 @@ const metadata = {
   server: serverName,
   language: manifest.language ?? null,
   runtime: manifest.runtime ?? null,
+  toolchains: manifest.toolchains ?? [],
+  implementation: manifest.implementation ?? null,
+  concurrency: manifest.concurrency ?? null,
   suite: manifest.suite || 'http-json',
   server_command: manifest.run || '',
   url: urls[0],

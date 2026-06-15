@@ -1,0 +1,11 @@
+{
+  "id": "java-httpserver",
+  "language": "Java",
+  "runtime": "OpenJDK HttpServer + Gson",
+  "suite": "http-json",
+  "toolchains": ["java"],
+  "implementation": "jdk HttpServer + Gson",
+  "concurrency": "virtual-thread-per-exchange",
+  "install": "mkdir -p lib bin && test -f lib/gson-2.11.0.jar || curl -fsSL -o lib/gson-2.11.0.jar https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.11.0/gson-2.11.0.jar; javac -cp lib/gson-2.11.0.jar -d bin src/Server.java",
+  "run": "java -cp bin:lib/gson-2.11.0.jar Server"
+}
