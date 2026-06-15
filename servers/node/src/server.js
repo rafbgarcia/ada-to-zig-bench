@@ -2,8 +2,6 @@ import http from 'node:http';
 import { createWriteStream } from 'node:fs';
 import v8 from 'node:v8';
 
-const maxBodyBytes = 1 << 20;
-
 const host = process.env.HOST ?? '127.0.0.1';
 const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
 const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
@@ -14,12 +12,9 @@ let activeRequests = 0;
 let requestsStarted = 0;
 let responsesCompleted = 0;
 let totalErrors = 0;
-let acceptedConnections = 0;
-let closedConnections = 0;
 let responses2xx = 0;
 let responses4xx = 0;
 let responses5xx = 0;
-const sockets = new Set();
 
 const activityMetrics = activityMetricsPath ? createWriteStream(activityMetricsPath, { flags: 'a' }) : null;
 const serverEvents = serverEventsPath ? createWriteStream(serverEventsPath, { flags: 'a' }) : null;
@@ -51,10 +46,10 @@ function createServer(port) {
     if (req.url === '/health') {
       writeJSON(res, 200, {
         ok: true,
-        active_connections: sockets.size,
+        active_connections: null,
         active_requests: activeRequests,
-        accepted_connections_total: acceptedConnections,
-        closed_connections_total: closedConnections,
+        accepted_connections_total: null,
+        closed_connections_total: null,
         requests_started_total: requestsStarted,
         responses_completed_total: responsesCompleted,
         total_errors: totalErrors,
@@ -75,7 +70,7 @@ function createServer(port) {
     activeRequests += 1;
     requestsStarted += 1;
     try {
-      const request = JSON.parse(await readBody(req, maxBodyBytes));
+      const request = JSON.parse(await readBody(req));
       if (!Number.isSafeInteger(request.id) || request.id < 0 || typeof request.payload !== 'string') {
         totalErrors += 1;
         recordResponse(400);
@@ -89,48 +84,31 @@ function createServer(port) {
     } catch (error) {
       totalErrors += 1;
       recordResponse(400);
-      const reason = error.message === 'body_too_large' ? 'body_too_large' : 'invalid_json';
-      writeServerEvent('request_error', { reason, status_code: 400 });
-      writeJSON(res, 400, { error: reason });
+      writeServerEvent('request_error', { reason: 'invalid_json', status_code: 400 });
+      writeJSON(res, 400, { error: 'invalid_json' });
     } finally {
       activeRequests -= 1;
     }
   });
 
-  server.keepAliveTimeout = 65_000;
-  server.headersTimeout = 66_000;
-  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 120_000;
+  server.headersTimeout = 0;
+  server.requestTimeout = 0;
   server.port = port;
-
-  server.on('connection', (socket) => {
-    sockets.add(socket);
-    acceptedConnections += 1;
-    socket.on('close', () => {
-      sockets.delete(socket);
-      closedConnections += 1;
-    });
-  });
 
   return server;
 }
 
-function readBody(req, limitBytes) {
+function readBody(req) {
   return new Promise((resolve, reject) => {
-    let size = 0;
     const chunks = [];
 
     req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > limitBytes) {
-        reject(new Error('body_too_large'));
-        req.destroy();
-        return;
-      }
       chunks.push(chunk);
     });
 
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-  req.on('error', reject);
+    req.on('error', reject);
   });
 }
 
@@ -170,9 +148,9 @@ function activitySample() {
   return {
     ts: new Date().toISOString(),
     elapsed_seconds: elapsedSeconds(),
-    active_connections: sockets.size,
-    accepted_connections_total: acceptedConnections,
-    closed_connections_total: closedConnections,
+    active_connections: null,
+    accepted_connections_total: null,
+    closed_connections_total: null,
     active_requests: activeRequests,
     requests_started_total: requestsStarted,
     responses_completed_total: responsesCompleted,
@@ -237,7 +215,6 @@ function parsePorts(value) {
 }
 
 function shutdown() {
-  for (const socket of sockets) socket.destroy();
   let remaining = servers.length;
   const done = () => {
     remaining -= 1;

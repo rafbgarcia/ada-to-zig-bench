@@ -1,7 +1,5 @@
 import { createWriteStream } from 'node:fs';
 
-const maxBodyBytes = 1 << 20;
-
 const host = process.env.HOST ?? '127.0.0.1';
 const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
 const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
@@ -64,9 +62,6 @@ async function handleRequest(req) {
   requestsStarted += 1;
   try {
     const body = await req.text();
-    if (Buffer.byteLength(body) > maxBodyBytes) {
-      throw new Error('body_too_large');
-    }
     const request = JSON.parse(body);
     if (!Number.isSafeInteger(request.id) || request.id < 0 || typeof request.payload !== 'string') {
       totalErrors += 1;
@@ -80,9 +75,8 @@ async function handleRequest(req) {
   } catch (error) {
     totalErrors += 1;
     recordResponse(400);
-    const reason = error?.message === 'body_too_large' ? 'body_too_large' : 'invalid_json';
-    writeServerEvent('request_error', { reason, status_code: 400 });
-    return jsonResponse({ error: reason }, 400);
+    writeServerEvent('request_error', { reason: 'invalid_json', status_code: 400 });
+    return jsonResponse({ error: 'invalid_json' }, 400);
   } finally {
     activeRequests -= 1;
   }

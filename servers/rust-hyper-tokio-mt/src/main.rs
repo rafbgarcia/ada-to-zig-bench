@@ -22,8 +22,8 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::signal;
 
-const MAX_BODY_BYTES: usize = 1 << 20;
 const RUNTIME_NAME: &str = "rust-hyper-tokio-mt";
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> io::Result<()> {
@@ -69,9 +69,6 @@ async fn run() -> io::Result<()> {
                     }
                 };
 
-                metrics.accepted_connections.fetch_add(1, Ordering::Relaxed);
-                metrics.active_connections.fetch_add(1, Ordering::Relaxed);
-                let metrics_for_connection = Arc::clone(&metrics);
                 let metrics_for_service = Arc::clone(&metrics);
                 let files_for_service = Arc::clone(&files);
 
@@ -91,12 +88,6 @@ async fn run() -> io::Result<()> {
                     {
                         let _ = error;
                     }
-                    metrics_for_connection
-                        .active_connections
-                        .fetch_sub(1, Ordering::Relaxed);
-                    metrics_for_connection
-                        .closed_connections
-                        .fetch_add(1, Ordering::Relaxed);
                 });
             }
         });
@@ -116,10 +107,10 @@ async fn handle_request(
             StatusCode::OK,
             json!({
                 "ok": true,
-                "active_connections": metrics.active_connections.load(Ordering::Relaxed),
+                "active_connections": null,
                 "active_requests": metrics.active_requests.load(Ordering::Relaxed),
-                "accepted_connections_total": metrics.accepted_connections.load(Ordering::Relaxed),
-                "closed_connections_total": metrics.closed_connections.load(Ordering::Relaxed),
+                "accepted_connections_total": null,
+                "closed_connections_total": null,
                 "requests_started_total": metrics.requests_started.load(Ordering::Relaxed),
                 "responses_completed_total": metrics.responses_completed.load(Ordering::Relaxed),
                 "total_errors": metrics.request_errors.load(Ordering::Relaxed),
@@ -172,23 +163,14 @@ async fn read_json_request(request: Request<Incoming>) -> Result<RequestMessage,
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|_| "invalid_json")?;
         if let Some(chunk) = frame.data_ref() {
-            if bytes.len() + chunk.len() > MAX_BODY_BYTES {
-                return Err("body_too_large");
-            }
             bytes.extend_from_slice(chunk);
         }
     }
-    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "invalid_json")?;
-    let Some(id) = value.get("id").and_then(|field| field.as_u64()) else {
+    let message: RequestMessage = serde_json::from_slice(&bytes).map_err(|_| "invalid_json")?;
+    if message.id > MAX_SAFE_JSON_INTEGER {
         return Err("invalid_request");
-    };
-    let Some(payload) = value.get("payload").and_then(|field| field.as_str()) else {
-        return Err("invalid_request");
-    };
-    Ok(RequestMessage {
-        id,
-        payload: payload.to_string(),
-    })
+    }
+    Ok(message)
 }
 
 fn json_response(status: StatusCode, value: impl Serialize) -> Response<Full<Bytes>> {
@@ -228,9 +210,9 @@ fn write_activity_metric(files: &OutputFiles, metrics: &Metrics) {
         "ts": now_iso(),
         "elapsed_seconds": metrics.elapsed_seconds(),
         "elapsed_ms": metrics.elapsed_ms(),
-        "active_connections": metrics.active_connections.load(Ordering::Relaxed),
-        "accepted_connections_total": metrics.accepted_connections.load(Ordering::Relaxed),
-        "closed_connections_total": metrics.closed_connections.load(Ordering::Relaxed),
+        "active_connections": null,
+        "accepted_connections_total": null,
+        "closed_connections_total": null,
         "active_requests": metrics.active_requests.load(Ordering::Relaxed),
         "requests_started_total": metrics.requests_started.load(Ordering::Relaxed),
         "responses_completed_total": metrics.responses_completed.load(Ordering::Relaxed),
@@ -377,9 +359,6 @@ struct ResponseMessage {
 
 struct Metrics {
     started_at: Instant,
-    active_connections: AtomicUsize,
-    accepted_connections: AtomicU64,
-    closed_connections: AtomicU64,
     active_requests: AtomicUsize,
     requests_started: AtomicU64,
     responses_completed: AtomicU64,
@@ -393,9 +372,6 @@ impl Metrics {
     fn new() -> Self {
         Self {
             started_at: Instant::now(),
-            active_connections: AtomicUsize::new(0),
-            accepted_connections: AtomicU64::new(0),
-            closed_connections: AtomicU64::new(0),
             active_requests: AtomicUsize::new(0),
             requests_started: AtomicU64::new(0),
             responses_completed: AtomicU64::new(0),
