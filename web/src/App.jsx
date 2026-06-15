@@ -12,7 +12,6 @@ import {
   Line,
   LineChart,
   ReferenceArea,
-  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
@@ -22,7 +21,6 @@ import {
   loadRun,
   metricGroups,
   phaseColors,
-  significantRuntimeEvents,
 } from './data.js';
 import {
   formatCompact, formatSeriesValue
@@ -42,7 +40,6 @@ export default function App() {
   const [loadedByID, setLoadedByID] = useState({});
   const [pendingIDs, setPendingIDs] = useState({});
   const [errorsByID, setErrorsByID] = useState({});
-  const [showRuntimeEvents, setShowRuntimeEvents] = useState(true);
   const [showLatency, setShowLatency] = useState(false);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState('');
@@ -138,10 +135,8 @@ export default function App() {
         pendingIDs={pendingIDs}
         accentByID={accentByID}
         booting={booting}
-        showRuntimeEvents={showRuntimeEvents}
         showLatency={showLatency}
         onToggleRun={toggleRun}
-        onToggleRuntimeEvents={setShowRuntimeEvents}
         onToggleLatency={setShowLatency}
       />
 
@@ -166,7 +161,6 @@ export default function App() {
                 loading={Boolean(pendingIDs[run.id])}
                 error={errorsByID[run.id]}
                 groups={visibleMetricGroups}
-                showRuntimeEvents={showRuntimeEvents}
               />
             ))}
           </div>
@@ -182,10 +176,8 @@ function Sidebar({
   pendingIDs,
   accentByID,
   booting,
-  showRuntimeEvents,
   showLatency,
   onToggleRun,
-  onToggleRuntimeEvents,
   onToggleLatency,
 }) {
   return (
@@ -230,11 +222,6 @@ function Sidebar({
       <div className="sidebar-section">
         <span className="sidebar-label">Overlays</span>
         <label className="switch">
-          <input type="checkbox" checked={showRuntimeEvents} onChange={(event) => onToggleRuntimeEvents(event.target.checked)} />
-          <span className="switch-track" aria-hidden="true"><span /></span>
-          <span>Runtime events</span>
-        </label>
-        <label className="switch">
           <input type="checkbox" checked={showLatency} onChange={(event) => onToggleLatency(event.target.checked)} />
           <span className="switch-track" aria-hidden="true"><span /></span>
           <span>Latency charts</span>
@@ -244,13 +231,9 @@ function Sidebar({
   );
 }
 
-function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, showRuntimeEvents }) {
+function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups }) {
   const meta = loaded?.metadata ?? run.metadata ?? {};
   const status = runStatus(loaded);
-  const runtimeMarkers = useMemo(
-    () => (loaded ? significantRuntimeEvents(loaded.runtimeEvents) : []),
-    [loaded],
-  );
 
   return (
     <section className="bench-column" style={{ '--accent': accent, animationDelay: `${index * 70}ms` }}>
@@ -298,8 +281,6 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups, s
                   group={group}
                   loaded={loaded}
                   phases={loaded.phases ?? []}
-                  showRuntimeEvents={showRuntimeEvents}
-                  runtimeMarkers={runtimeMarkers}
                 />
               ))}
             </div>
@@ -346,7 +327,7 @@ function runStatus(loaded) {
   return { kind: 'failed', label: 'Failed' };
 }
 
-function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers }) {
+function MetricChart({ group, loaded, phases }) {
   const data = loaded?.timeline ?? [];
   const maxElapsed = loaded?.maxElapsed ?? 1;
   const series = group.id === 'connections'
@@ -436,16 +417,6 @@ function MetricChart({ group, loaded, phases, showRuntimeEvents, runtimeMarkers 
                 isAnimationActive={false}
               />
             ))}
-            {showRuntimeEvents ? runtimeMarkers.map((event, index) => (
-              <ReferenceLine
-                key={`${group.id}-runtime-${event.second}-${index}`}
-                x={event.second}
-                yAxisId="left"
-                stroke={event.kind === 'major' ? '#b42318' : '#98a2b3'}
-                strokeDasharray={event.kind === 'major' ? undefined : '3 3'}
-                strokeOpacity={0.6}
-              />
-            )) : null}
           </LineChart>
         )}
       </div>

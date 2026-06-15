@@ -7,7 +7,6 @@ const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
 const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
 const serverEventsPath = process.env.SERVER_EVENTS_PATH;
 const runtimeMetricsPath = process.env.RUNTIME_METRICS_PATH;
-const runtimeEventsPath = process.env.RUNTIME_EVENTS_PATH;
 
 let activeRequests = 0;
 let requestsStarted = 0;
@@ -20,7 +19,6 @@ let responses5xx = 0;
 const activityMetrics = activityMetricsPath ? createWriteStream(activityMetricsPath, { flags: 'a' }) : null;
 const serverEvents = serverEventsPath ? createWriteStream(serverEventsPath, { flags: 'a' }) : null;
 const runtimeMetrics = runtimeMetricsPath ? createWriteStream(runtimeMetricsPath, { flags: 'a' }) : null;
-const runtimeEvents = runtimeEventsPath ? createWriteStream(runtimeEventsPath, { flags: 'a' }) : null;
 const startedAt = Date.now();
 const servers = ports.map((port) => Bun.serve({ hostname: host, port, idleTimeout: 120, fetch: handleRequest }));
 
@@ -36,11 +34,6 @@ if (activityMetrics) {
 if (runtimeMetrics) {
   writeRuntimeMetric();
   setInterval(writeRuntimeMetric, 1000).unref();
-}
-
-if (runtimeEvents) {
-  // Bun does not expose a Node-compatible GC performance event stream.
-  runtimeEvents.write('');
 }
 
 process.once('SIGTERM', shutdown);
@@ -196,6 +189,5 @@ function shutdown() {
   activityMetrics?.end();
   serverEvents?.end();
   runtimeMetrics?.end();
-  runtimeEvents?.end();
   process.exit(0);
 }

@@ -66,10 +66,6 @@ async fn run() -> io::Result<()> {
         });
     }
 
-    if let Some(file) = &files.runtime_events {
-        let _ = file.lock().unwrap().write_all(b"");
-    }
-
     for port in ports {
         let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|error| {
             io::Error::new(
@@ -420,7 +416,6 @@ struct OutputFiles {
     activity_metrics: Option<Mutex<File>>,
     server_events: Option<Mutex<File>>,
     runtime_metrics: Option<Mutex<File>>,
-    runtime_events: Option<Mutex<File>>,
 }
 
 impl OutputFiles {
@@ -429,7 +424,6 @@ impl OutputFiles {
             activity_metrics: open_optional("ACTIVITY_METRICS_PATH")?,
             server_events: open_optional("SERVER_EVENTS_PATH")?,
             runtime_metrics: open_optional("RUNTIME_METRICS_PATH")?,
-            runtime_events: open_optional("RUNTIME_EVENTS_PATH")?,
         })
     }
 

@@ -17,7 +17,6 @@ const runFiles = [
   'loadgen_metrics.jsonl',
   'loadgen_errors.jsonl',
   'runtime_metrics.jsonl',
-  'runtime_events.jsonl',
 ];
 
 await rm(distDir, { recursive: true, force: true });

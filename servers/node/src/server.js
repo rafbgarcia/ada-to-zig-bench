@@ -1,7 +1,6 @@
 import http from 'node:http';
 import { createWriteStream } from 'node:fs';
 import v8 from 'node:v8';
-import { constants, PerformanceObserver } from 'node:perf_hooks';
 
 const maxBodyBytes = 1 << 20;
 
@@ -10,7 +9,6 @@ const ports = parsePorts(process.env.PORTS ?? process.env.PORT ?? '8080');
 const activityMetricsPath = process.env.ACTIVITY_METRICS_PATH;
 const serverEventsPath = process.env.SERVER_EVENTS_PATH;
 const runtimeMetricsPath = process.env.RUNTIME_METRICS_PATH;
-const runtimeEventsPath = process.env.RUNTIME_EVENTS_PATH;
 
 let activeRequests = 0;
 let requestsStarted = 0;
@@ -26,7 +24,6 @@ const sockets = new Set();
 const activityMetrics = activityMetricsPath ? createWriteStream(activityMetricsPath, { flags: 'a' }) : null;
 const serverEvents = serverEventsPath ? createWriteStream(serverEventsPath, { flags: 'a' }) : null;
 const runtimeMetrics = runtimeMetricsPath ? createWriteStream(runtimeMetricsPath, { flags: 'a' }) : null;
-const runtimeEvents = runtimeEventsPath ? createWriteStream(runtimeEventsPath, { flags: 'a' }) : null;
 const startedAt = Date.now();
 const servers = ports.map((port) => createServer(port));
 
@@ -44,26 +41,6 @@ if (activityMetrics) {
 if (runtimeMetrics) {
   writeRuntimeMetric();
   setInterval(writeRuntimeMetric, 1000).unref();
-}
-
-if (runtimeEvents) {
-  const observer = new PerformanceObserver((items) => {
-    for (const entry of items.getEntries()) {
-      const kindCode = entry.detail?.kind ?? null;
-      const flags = entry.detail?.flags ?? null;
-      writeRuntimeEvent({
-        ts: new Date().toISOString(),
-        elapsed_seconds: elapsedSeconds(),
-        runtime: 'node',
-        event: 'gc',
-        kind: gcKindName(kindCode),
-        kind_code: kindCode,
-        flags,
-        duration_ms: entry.duration,
-      });
-    }
-  });
-  observer.observe({ entryTypes: ['gc'] });
 }
 
 process.once('SIGTERM', shutdown);
@@ -246,10 +223,6 @@ function writeServerEvent(event, fields = {}) {
   })}\n`);
 }
 
-function writeRuntimeEvent(event) {
-  runtimeEvents.write(`${JSON.stringify(event)}\n`);
-}
-
 function elapsedSeconds() {
   return Math.floor((Date.now() - startedAt) / 1000);
 }
@@ -263,21 +236,6 @@ function parsePorts(value) {
   return [...new Set(parsed)];
 }
 
-function gcKindName(kindCode) {
-  switch (kindCode) {
-    case constants.NODE_PERFORMANCE_GC_MAJOR:
-      return 'major';
-    case constants.NODE_PERFORMANCE_GC_MINOR:
-      return 'minor';
-    case constants.NODE_PERFORMANCE_GC_INCREMENTAL:
-      return 'incremental';
-    case constants.NODE_PERFORMANCE_GC_WEAKCB:
-      return 'weakcb';
-    default:
-      return 'unknown';
-  }
-}
-
 function shutdown() {
   for (const socket of sockets) socket.destroy();
   let remaining = servers.length;
@@ -285,7 +243,6 @@ function shutdown() {
     remaining -= 1;
     if (remaining <= 0) {
       runtimeMetrics?.end();
-      runtimeEvents?.end();
       activityMetrics?.end();
       serverEvents?.end();
       process.exit(0);

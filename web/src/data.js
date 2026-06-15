@@ -115,14 +115,13 @@ export async function fetchRuns() {
 }
 
 export async function loadRun(runID) {
-  const [metadata, summary, serverRaw, activityRaw, loadgenRaw, runtimeRaw, runtimeEventsRaw, serverEventsRaw, loadgenErrorsRaw] = await Promise.all([
+  const [metadata, summary, serverRaw, activityRaw, loadgenRaw, runtimeRaw, serverEventsRaw, loadgenErrorsRaw] = await Promise.all([
     fetchJSON(runFileURL(runID, 'metadata.json')),
     fetchJSON(runFileURL(runID, 'summary.json')).catch(() => null),
     fetchText(runFileURL(runID, 'server_metrics.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'activity_metrics.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'loadgen_metrics.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'runtime_metrics.jsonl')).catch(() => ''),
-    fetchText(runFileURL(runID, 'runtime_events.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'server_events.jsonl')).catch(() => ''),
     fetchText(runFileURL(runID, 'loadgen_errors.jsonl')).catch(() => ''),
   ]);
@@ -136,12 +135,11 @@ export async function loadRun(runID) {
     heap_used_mb: bytesToMB(sample.heap_used_bytes ?? sample.used_heap_size_bytes ?? 0),
     heap_total_mb: bytesToMB(sample.heap_total_bytes ?? sample.total_heap_size_bytes ?? 0),
   }));
-  const runtimeEvents = parseJSONL(runtimeEventsRaw);
   const serverEvents = parseJSONL(serverEventsRaw);
   const loadgenErrors = parseJSONL(loadgenErrorsRaw);
 
-  const timelineStart = findTimelineStart(metadata, serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors);
-  for (const group of [serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, runtimeEvents, serverEvents, loadgenErrors]) {
+  const timelineStart = findTimelineStart(metadata, serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, serverEvents, loadgenErrors);
+  for (const group of [serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, serverEvents, loadgenErrors]) {
     annotateTimelineSeconds(group, timelineStart);
   }
 
@@ -151,7 +149,6 @@ export async function loadRun(runID) {
     ...activityMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...loadgenMetrics.map((sample) => sample.timeline_seconds ?? 0),
     ...runtimeMetrics.map((sample) => sample.timeline_seconds ?? 0),
-    ...runtimeEvents.map((event) => event.timeline_seconds ?? 0),
     ...serverEvents.map((event) => event.timeline_seconds ?? 0),
     ...loadgenErrors.map((event) => event.timeline_seconds ?? 0),
   );
@@ -167,7 +164,6 @@ export async function loadRun(runID) {
     activityMetrics,
     loadgenMetrics,
     runtimeMetrics,
-    runtimeEvents,
     serverEvents,
     loadgenErrors,
     phases,
@@ -188,17 +184,6 @@ export function nearestSample(samples, elapsed) {
     }
   }
   return best;
-}
-
-export function significantRuntimeEvents(runtimeEvents) {
-  return runtimeEvents
-    .filter((event) => event.event === 'gc')
-    .filter((event) => event.kind === 'major' || Number(event.duration_ms ?? 0) >= 5)
-    .map((event) => ({
-      second: Math.round(Number(event.timeline_seconds ?? 0)),
-      kind: event.kind ?? 'gc',
-      durationMs: Number(event.duration_ms ?? 0),
-    }));
 }
 
 export function recentEvents(loaded, elapsed, limit = 12) {
