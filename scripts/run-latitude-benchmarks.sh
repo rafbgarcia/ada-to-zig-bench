@@ -36,6 +36,7 @@ PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
 PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 16384}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
+WORK_MODE="${WORK_MODE:-open-loop}"
 TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
 CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
 CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
@@ -94,6 +95,7 @@ Environment:
   PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 16384" post-ramp payload sizes
   PAYLOAD_SWEEP_SECONDS       default: 5 per post-ramp payload size
   REQUESTS_PER_SECOND         default: 100000 final request rate
+  WORK_MODE                   default: open-loop; use fixed-work for same request count per stage
   TARGET_CONNECTION_RATE      default: 50000
   CONNECTION_RETRIES          default: 3 failed connection dial/warmup retries
   CONNECTION_RETRY_DELAY      default: 1s between connection retries
@@ -1000,6 +1002,7 @@ run_loadgen() {
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
     CONNECTION_TARGETS="$remote_connection_targets" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
+    WORK_MODE="$WORK_MODE" \
     TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
     CONNECTION_RETRIES="$CONNECTION_RETRIES" \
     CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
@@ -1035,6 +1038,7 @@ done
   --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
   --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
   --requests-per-second "$REQUESTS_PER_SECOND" \
+  --work-mode "$WORK_MODE" \
   --target-connection-rate "$TARGET_CONNECTION_RATE" \
   --connection-retries "$CONNECTION_RETRIES" \
   --connection-retry-delay "$CONNECTION_RETRY_DELAY" \
@@ -1100,6 +1104,7 @@ const metadata = {
   payload_bytes: summary.payload_bytes ?? null,
   payload_sweep_bytes: summary.payload_sweep_bytes ?? process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_sweep_seconds: summary.payload_sweep_seconds ?? Number(process.env.PAYLOAD_SWEEP_SECONDS),
+  work_mode: summary.work_mode ?? process.env.WORK_MODE ?? 'open-loop',
   target_requests_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_messages_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_connection_rate: summary.target_connection_rate ?? null,

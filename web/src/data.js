@@ -10,20 +10,25 @@ export const metricGroups = [
   },
   {
     id: 'work',
-    title: 'Successful Responses',
-    description: 'Successful /json responses per second from the measured server process.',
+    title: 'Request Throughput',
+    description: 'Client-observed schedule, dispatch, and completion rates derived from cumulative load-generator counters.',
     unit: '/s',
     series: [
-      { key: 'responses2xxPerSecond', label: 'Responses', color: '#0f766e', unit: '/s' },
+      { key: 'targetRequestsPerSecond', label: 'Target', color: '#64748b', unit: '/s' },
+      { key: 'loadgenScheduledPerSecond', label: 'Scheduled', color: '#2563eb', unit: '/s' },
+      { key: 'loadgenDispatchedPerSecond', label: 'Dispatched', color: '#d97706', unit: '/s' },
+      { key: 'loadgenReceivedPerSecond', label: 'Completed', color: '#0f766e', unit: '/s' },
+      { key: 'dispatchMissesPerSecond', label: 'Missed slots', color: '#be123c', unit: '/s' },
     ],
   },
   {
     id: 'inflight',
     title: 'In-Flight Requests',
-    description: 'Current requests active in the measured server process.',
+    description: 'Current requests active in the load generator and measured server process.',
     unit: '',
     series: [
-      { key: 'activeRequests', label: 'In flight', color: '#7c3aed' },
+      { key: 'loadgenInFlight', label: 'Loadgen in flight', color: '#7c3aed' },
+      { key: 'activeRequests', label: 'Server active', color: '#0f766e' },
     ],
   },
   {
@@ -138,10 +143,9 @@ export async function loadRun(runID) {
     fetchText(runFileURL(runID, 'loadgen_errors.jsonl')).catch(() => ''),
   ]);
 
-  const serverMetrics = parseJSONL(serverRaw);
-  const serverMetricsWithRates = withDerivedServerRates(serverMetrics);
-  const activityMetrics = withDerivedActivityRates(parseJSONL(activityRaw));
-  const loadgenMetrics = parseJSONL(loadgenRaw);
+  const serverMetricsRaw = parseJSONL(serverRaw);
+  const activityMetricsRaw = parseJSONL(activityRaw);
+  const loadgenMetricsRaw = parseJSONL(loadgenRaw);
   const runtimeMetrics = parseJSONL(runtimeRaw).map((sample) => ({
     ...sample,
     heap_used_mb: bytesToMB(sample.heap_used_bytes ?? sample.used_heap_size_bytes ?? 0),
@@ -150,10 +154,14 @@ export async function loadRun(runID) {
   const serverEvents = parseJSONL(serverEventsRaw);
   const loadgenErrors = parseJSONL(loadgenErrorsRaw);
 
-  const timelineStart = findTimelineStart(metadata, serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, serverEvents, loadgenErrors);
-  for (const group of [serverMetricsWithRates, activityMetrics, loadgenMetrics, runtimeMetrics, serverEvents, loadgenErrors]) {
+  const timelineStart = findTimelineStart(metadata, serverMetricsRaw, activityMetricsRaw, loadgenMetricsRaw, runtimeMetrics, serverEvents, loadgenErrors);
+  for (const group of [serverMetricsRaw, activityMetricsRaw, loadgenMetricsRaw, runtimeMetrics, serverEvents, loadgenErrors]) {
     annotateTimelineSeconds(group, timelineStart);
   }
+
+  const serverMetricsWithRates = withDerivedServerRates(serverMetricsRaw);
+  const activityMetrics = withDerivedActivityRates(activityMetricsRaw);
+  const loadgenMetrics = withDerivedLoadgenRates(loadgenMetricsRaw);
 
   const maxElapsed = Math.max(
     0,
@@ -212,9 +220,8 @@ export function recentEvents(loaded, elapsed, limit = 12) {
 
 function withDerivedActivityRates(samples) {
   let previous = null;
-  return samples.map((sample) => {
-    const elapsed = Number(sample.elapsed_seconds ?? 0);
-    const deltaSeconds = previous ? Math.max(1, elapsed - Number(previous.elapsed_seconds ?? 0)) : 1;
+  return dedupeSamplesByTime(samples).map((sample) => {
+    const deltaSeconds = secondsBetween(previous, sample);
     const next = {
       ...sample,
       requests_started_per_second: delta(sample, previous, 'requests_started_total') / deltaSeconds,
@@ -231,9 +238,8 @@ function withDerivedActivityRates(samples) {
 
 function withDerivedServerRates(samples) {
   let previous = null;
-  return samples.map((sample) => {
-    const elapsed = Number(sample.elapsed_seconds ?? 0);
-    const deltaSeconds = previous ? Math.max(1, elapsed - Number(previous.elapsed_seconds ?? 0)) : 1;
+  return dedupeSamplesByTime(samples).map((sample) => {
+    const deltaSeconds = secondsBetween(previous, sample);
     const next = {
       ...sample,
       tcp_listen_overflows_per_second: delta(sample, previous, 'tcp_listen_overflows') / deltaSeconds,
@@ -246,6 +252,79 @@ function withDerivedServerRates(samples) {
     previous = sample;
     return next;
   });
+}
+
+function withDerivedLoadgenRates(samples) {
+  let previous = null;
+  return dedupeSamplesByTime(samples).map((sample) => {
+    const deltaSeconds = secondsBetween(previous, sample);
+    const next = {
+      ...sample,
+      scheduled_per_second: sample.scheduled != null
+        ? derivedRate(sample, previous, 'scheduled', deltaSeconds, sample.scheduled_per_second)
+        : numberValue(sample.scheduled_per_second, numberValue(sample.target_requests_per_second)),
+      dispatched_per_second: sample.dispatched != null
+        ? derivedRate(sample, previous, 'dispatched', deltaSeconds, sample.dispatched_per_second ?? sample.sent_per_second)
+        : numberValue(sample.dispatched_per_second, numberValue(sample.sent_per_second)),
+      sent_per_second: derivedRate(sample, previous, 'sent', deltaSeconds, sample.sent_per_second),
+      received_per_second: derivedRate(sample, previous, 'received', deltaSeconds, sample.received_per_second),
+      errors_per_second: derivedRate(sample, previous, 'errors', deltaSeconds, sample.errors_per_second),
+      dispatch_misses_per_second: derivedRate(sample, previous, 'dispatch_misses', deltaSeconds, sample.dispatch_misses_per_second),
+      connection_attempts_per_second: derivedRate(sample, previous, 'connection_attempts', deltaSeconds, sample.connection_attempts_per_second),
+      connection_retries_per_second: derivedRate(sample, previous, 'connection_retries', deltaSeconds, sample.connection_retries_per_second),
+      connection_failures_per_second: derivedRate(sample, previous, 'connection_failures', deltaSeconds, sample.connection_failures_per_second),
+    };
+    previous = sample;
+    return next;
+  });
+}
+
+function dedupeSamplesByTime(samples) {
+  const next = [];
+  for (const sample of samples) {
+    const last = next[next.length - 1];
+    if (!last || sampleTimeMs(last) !== sampleTimeMs(sample)) {
+      next.push(sample);
+      continue;
+    }
+    next[next.length - 1] = mergeDuplicateSample(last, sample);
+  }
+  return next;
+}
+
+function mergeDuplicateSample(previous, sample) {
+  const merged = { ...previous, ...sample };
+  for (const [key, value] of Object.entries(previous)) {
+    if (!key.endsWith('_total') && !['scheduled', 'dispatched', 'sent', 'received', 'errors', 'dispatch_misses', 'connection_attempts', 'connection_retries', 'connection_failures'].includes(key)) {
+      continue;
+    }
+    const left = Number(value);
+    const right = Number(sample[key]);
+    if (Number.isFinite(left) && Number.isFinite(right)) merged[key] = Math.max(left, right);
+  }
+  return merged;
+}
+
+function secondsBetween(previous, sample) {
+  if (!previous) return 1;
+  return Math.max(0.001, (sampleTimeMs(sample) - sampleTimeMs(previous)) / 1000);
+}
+
+function sampleTimeMs(sample) {
+  const timeline = Number(sample.timeline_ms);
+  if (Number.isFinite(timeline)) return timeline;
+  const elapsedMs = Number(sample.elapsed_ms);
+  if (Number.isFinite(elapsedMs)) return elapsedMs;
+  const parsed = Date.parse(sample.ts);
+  if (Number.isFinite(parsed)) return parsed;
+  return Number(sample.timeline_seconds ?? sample.elapsed_seconds ?? 0) * 1000;
+}
+
+function derivedRate(sample, previous, key, deltaSeconds, fallback) {
+  if (previous && sample[key] != null && previous[key] != null) {
+    return delta(sample, previous, key) / deltaSeconds;
+  }
+  return numberValue(fallback);
 }
 
 function delta(sample, previous, key) {
@@ -283,6 +362,7 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       loadgenConnections: nullableNumber(loadgen.active_connections),
       serverConnections: nullableNumber(activity.active_connections ?? server.tcp_established),
       activeRequests: numberValue(activity.active_requests),
+      loadgenInFlight: numberValue(loadgen.in_flight, Math.max(0, numberValue(loadgen.sent) - numberValue(loadgen.received) - numberValue(loadgen.errors))),
       serverRequestsPerSecond: numberValue(activity.requests_started_per_second),
       serverResponsesPerSecond: numberValue(activity.responses_completed_per_second),
       responses2xxPerSecond: numberValue(activity.responses_2xx_per_second),
@@ -291,6 +371,8 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       serverErrorsPerSecond: numberValue(activity.request_errors_per_second),
       loadgenErrorsPerSecond: numberValue(loadgen.errors_per_second),
       dispatchMissesPerSecond: numberValue(loadgen.dispatch_misses_per_second),
+      loadgenScheduledPerSecond: numberValue(loadgen.scheduled_per_second, numberValue(loadgen.target_requests_per_second)),
+      loadgenDispatchedPerSecond: numberValue(loadgen.dispatched_per_second, numberValue(loadgen.sent_per_second)),
       connectionAttemptsPerSecond: numberValue(loadgen.connection_attempts_per_second),
       connectionRetriesPerSecond: numberValue(loadgen.connection_retries_per_second),
       connectionFailuresPerSecond: numberValue(loadgen.connection_failures_per_second),
@@ -329,9 +411,26 @@ function samplesBySecond(samples) {
   const bySecond = new Map();
   for (const sample of samples) {
     const second = Math.max(0, Math.round(Number(sample.timeline_seconds ?? sample.elapsed_seconds ?? 0)));
-    bySecond.set(second, sample);
+    const current = bySecond.get(second);
+    bySecond.set(second, chooseSampleForSecond(current, sample));
   }
   return bySecond;
+}
+
+function chooseSampleForSecond(current, sample) {
+  if (!current) return sample;
+  return sampleProgress(sample) >= sampleProgress(current) ? sample : current;
+}
+
+function sampleProgress(sample) {
+  return Math.max(
+    numberValue(sample.responses_completed_total),
+    numberValue(sample.responses_2xx_total),
+    numberValue(sample.received),
+    numberValue(sample.sent),
+    numberValue(sample.dispatched),
+    numberValue(sample.scheduled),
+  );
 }
 
 function findTimelineStart(metadata, ...groups) {
@@ -353,9 +452,13 @@ function findTimelineStart(metadata, ...groups) {
 function annotateTimelineSeconds(samples, startTime) {
   for (const sample of samples) {
     const time = Date.parse(sample.ts);
-    sample.timeline_seconds = Number.isFinite(time)
-      ? Math.max(0, Math.round((time - startTime) / 1000))
-      : Number(sample.elapsed_seconds ?? 0);
+    if (Number.isFinite(time)) {
+      sample.timeline_ms = Math.max(0, time - startTime);
+      sample.timeline_seconds = Math.max(0, Math.round(sample.timeline_ms / 1000));
+    } else {
+      sample.timeline_ms = Number(sample.elapsed_ms ?? Number(sample.elapsed_seconds ?? 0) * 1000);
+      sample.timeline_seconds = Math.max(0, Math.round(sample.timeline_ms / 1000));
+    }
   }
 }
 

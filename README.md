@@ -64,6 +64,7 @@ payload_bytes:             256
 payload_sweep_bytes:       "256 1024 4096 16384"
 payload_sweep_seconds:     5
 requests/sec:              100000 final target
+work_mode:                 open-loop
 request_ramp_seconds:      10
 baseline:                  0s
 connection_ramp:           50000 new connections/sec target
@@ -119,6 +120,7 @@ SSH_READY_TIMEOUT_SECONDS=600
 SSH_CONNECT_TIMEOUT_SECONDS=5
 BENCHMARK_CONNECTIONS=1000000
 REQUESTS_PER_SECOND=100000
+WORK_MODE=open-loop
 PAYLOAD_BYTES=256
 PAYLOAD_SWEEP_BYTES="256 1024 4096 16384"
 PAYLOAD_SWEEP_SECONDS=5
@@ -136,9 +138,13 @@ The server listens on 32 ports by default (`8080..8111`) so one loadgen IPv4 can
 
 The Latitude runner raises Linux limits on both hosts before the measured run. It sets `fs.nr_open`, `fs.file-max`, `net.core.somaxconn`, `net.ipv4.tcp_max_syn_backlog`, `net.ipv4.ip_local_port_range`, `net.ipv4.tcp_tw_reuse`, and a per-process `nofile` limit derived from the largest configured connection target. For 1M connections, you need this class of OS tuning; the default Linux `nofile` limit and a single destination port will not be enough.
 
-`server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, Linux TCP socket state counts, and Linux `TcpExt` backlog/drop counters where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors.
+`server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, Linux TCP socket state counts, and Linux `TcpExt` backlog/drop counters where available. `activity_metrics.jsonl` contains in-process server work counters: active connections when the implementation can report them, active requests, request totals, response totals, status buckets, and server-side request errors. Treat these server-side counters as validation and resource correlation. The primary throughput truth is `loadgen_metrics.jsonl`, which records cumulative scheduled, dispatched, sent, received, error, and dispatch-miss counters from the isolated load generator; rates should be derived from those cumulative counters and sample timestamps.
 
 `summary.json.total_errors` captures all response, protocol, checksum, and connection-attempt failures observed by the load generator. During connection ramp, failed dial or `/health` warmup attempts are retried up to `CONNECTION_RETRIES` times with `CONNECTION_RETRY_DELAY` between attempts; defaults are 3 retries and 1 second. `summary.json.total_connection_attempts`, `summary.json.total_connection_retries`, and `summary.json.total_connection_failures` separate retry recovery from terminal failed connection slots. `loadgen_errors.jsonl` is a bounded sample of failures and includes attempt metadata for connection attempts; `summary.json.loadgen_error_samples` and `summary.json.loadgen_errors_dropped` show how much was written or omitted. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive connection already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. `summary.json.success` is `false` when a server cannot reach the configured connection target; that target miss is still a benchmark result. Orchestration fails only when the load generator cannot produce a complete summary or required artifacts are missing.
+
+`WORK_MODE=open-loop` is the default benchmark mode. It schedules request slots at the configured rate and records dispatch misses when all connections are busy, then waits for all dispatched in-flight requests to finish before moving to the next stage. This mode is best for saturation analysis: target rate, actual dispatch rate, completed rate, missed slots, latency growth, and drain time.
+
+`WORK_MODE=fixed-work` keeps the same per-stage target request count but does not drop missed slots. If the server is saturated, the load generator delays dispatch until a connection becomes idle and then continues until every scheduled request for that stage has been dispatched and completed. This mode is best for same-work comparisons: each server receives the same request count, and stage elapsed/drain time shows how long it took to finish.
 
 `BENCHMARK_CONNECTIONS` is the connection target. The default `1000000` means the loadgen opens connections at `TARGET_CONNECTION_RATE=50000` until it reaches 1M, then ramps request dispatch to `REQUESTS_PER_SECOND=100000` over `TRAFFIC_SECONDS=10`. After target RPS is reached, it sends each configured `PAYLOAD_SWEEP_BYTES` size for `PAYLOAD_SWEEP_SECONDS` while holding the same connection count and request rate. With defaults, the benchmark reaches 1M connections in about 20 seconds, reaches 100k requests per second 10 seconds later, then runs 20 seconds of payload-size sweep.
 

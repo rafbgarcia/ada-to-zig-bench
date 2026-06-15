@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -20,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::signal;
-use tokio::time;
 
 const MAX_BODY_BYTES: usize = 1 << 20;
 const RUNTIME_NAME: &str = "rust-hyper-tokio-mt";
@@ -40,31 +40,7 @@ async fn run() -> io::Result<()> {
     let metrics = Arc::new(Metrics::new());
     let files = Arc::new(OutputFiles::from_env()?);
 
-    if files.activity_metrics.is_some() {
-        let metrics = Arc::clone(&metrics);
-        let files = Arc::clone(&files);
-        tokio::spawn(async move {
-            write_activity_metric(&files, &metrics);
-            let mut interval = time::interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                write_activity_metric(&files, &metrics);
-            }
-        });
-    }
-
-    if files.runtime_metrics.is_some() {
-        let metrics = Arc::clone(&metrics);
-        let files = Arc::clone(&files);
-        tokio::spawn(async move {
-            write_runtime_metric(&files, &metrics);
-            let mut interval = time::interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                write_runtime_metric(&files, &metrics);
-            }
-        });
-    }
+    start_metrics_writer(Arc::clone(&files), Arc::clone(&metrics));
 
     for port in ports {
         let addr: SocketAddr = format!("{host}:{port}").parse().map_err(|error| {
@@ -251,6 +227,7 @@ fn write_activity_metric(files: &OutputFiles, metrics: &Metrics) {
     let value = json!({
         "ts": now_iso(),
         "elapsed_seconds": metrics.elapsed_seconds(),
+        "elapsed_ms": metrics.elapsed_ms(),
         "active_connections": metrics.active_connections.load(Ordering::Relaxed),
         "accepted_connections_total": metrics.accepted_connections.load(Ordering::Relaxed),
         "closed_connections_total": metrics.closed_connections.load(Ordering::Relaxed),
@@ -263,6 +240,27 @@ fn write_activity_metric(files: &OutputFiles, metrics: &Metrics) {
         "request_errors_total": metrics.request_errors.load(Ordering::Relaxed),
     });
     files.write_json_line(&files.activity_metrics, &value);
+}
+
+fn start_metrics_writer(files: Arc<OutputFiles>, metrics: Arc<Metrics>) {
+    if files.activity_metrics.is_none() && files.runtime_metrics.is_none() {
+        return;
+    }
+
+    thread::spawn(move || loop {
+        let started = Instant::now();
+        if files.activity_metrics.is_some() {
+            write_activity_metric(&files, &metrics);
+        }
+        if files.runtime_metrics.is_some() {
+            write_runtime_metric(&files, &metrics);
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed < Duration::from_secs(1) {
+            thread::sleep(Duration::from_secs(1) - elapsed);
+        }
+    });
 }
 
 fn write_runtime_metric(files: &OutputFiles, metrics: &Metrics) {
@@ -297,6 +295,7 @@ fn runtime_sample(metrics: &Metrics) -> serde_json::Value {
     json!({
         "ts": now_iso(),
         "elapsed_seconds": metrics.elapsed_seconds(),
+        "elapsed_ms": metrics.elapsed_ms(),
         "runtime": RUNTIME_NAME,
         "rss_bytes": rss_bytes,
         "heap_total_bytes": heap_bytes,
@@ -409,6 +408,10 @@ impl Metrics {
 
     fn elapsed_seconds(&self) -> u64 {
         self.started_at.elapsed().as_secs()
+    }
+
+    fn elapsed_ms(&self) -> u128 {
+        self.started_at.elapsed().as_millis()
     }
 }
 
