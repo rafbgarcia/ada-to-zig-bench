@@ -180,22 +180,8 @@ p {
 }
 
 .run-info {
-  display: flex;
-  flex-direction: column;
   min-width: 0;
-  line-height: 1.3;
-}
-
-.run-info strong {
-  color: var(--ink);
-  font-size: 13.5px;
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-.run-info small {
-  color: var(--muted);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .run-item .spin {
@@ -268,6 +254,43 @@ p {
   outline: 2px solid rgba(99, 102, 241, 0.5);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* ---- Phase legend ------------------------------------------------------ */
+
+.phase-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 12.5px;
+  color: var(--muted, #8b909b);
+}
+
+.phase-legend-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  color: var(--muted-strong, #aeb3bd);
+}
+
+.phase-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.phase-legend-item i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
 }
 
 /* ---- Board states ------------------------------------------------------ */

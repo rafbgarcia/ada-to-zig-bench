@@ -21,6 +21,7 @@ import {
   loadRun,
   metricGroups,
   phaseColors,
+  phaseLabels,
 } from './data.js';
 import {
   formatCompact, formatSeriesValue
@@ -29,9 +30,22 @@ import {
 const chartMargin = { top: 16, right: 14, bottom: 4, left: 0 };
 
 const runAccents = ['#0f766e', '#2563eb', '#7c3aed', '#b42318', '#0891b2', '#d97706', '#be185d', '#15803d'];
+const runNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function accentFor(index) {
   return runAccents[index % runAccents.length];
+}
+
+function runSortLabel(run) {
+  const meta = run.metadata ?? {};
+  return meta.server ?? run.id ?? '';
+}
+
+function sortRunsAlphabetically(runs) {
+  return [...runs].sort((left, right) => (
+    runNameCollator.compare(runSortLabel(left), runSortLabel(right))
+    || runNameCollator.compare(left.id ?? '', right.id ?? '')
+  ));
 }
 
 export default function App() {
@@ -40,7 +54,6 @@ export default function App() {
   const [loadedByID, setLoadedByID] = useState({});
   const [pendingIDs, setPendingIDs] = useState({});
   const [errorsByID, setErrorsByID] = useState({});
-  const [showLatency, setShowLatency] = useState(false);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState('');
   const loadingIDsRef = useRef(new Set());
@@ -50,7 +63,7 @@ export default function App() {
 
     async function boot() {
       try {
-        const nextRuns = await fetchRuns();
+        const nextRuns = sortRunsAlphabetically(await fetchRuns());
         if (cancelled) return;
         setRuns(nextRuns);
         if (nextRuns[0]) setSelectedIDs([nextRuns[0].id]);
@@ -114,8 +127,16 @@ export default function App() {
     return map;
   }, [runs]);
 
-  const visibleMetricGroups = showLatency ? metricGroups : metricGroups.filter((group) => !group.secondary);
   const orderedSelection = runs.filter((run) => selectedIDs.includes(run.id));
+
+  const activePhases = useMemo(() => {
+    const seen = new Set();
+    for (const run of orderedSelection) {
+      const loaded = loadedByID[run.id];
+      for (const phase of loaded?.phases ?? []) seen.add(phase.name);
+    }
+    return Object.keys(phaseColors).filter((name) => seen.has(name));
+  }, [orderedSelection, loadedByID]);
 
   function toggleRun(id) {
     setSelectedIDs((current) =>
@@ -135,13 +156,13 @@ export default function App() {
         pendingIDs={pendingIDs}
         accentByID={accentByID}
         booting={booting}
-        showLatency={showLatency}
         onToggleRun={toggleRun}
-        onToggleLatency={setShowLatency}
       />
 
       <main className="board">
         {bootError ? <ErrorBanner message={bootError} /> : null}
+
+        {activePhases.length > 0 ? <PhaseLegend phases={activePhases} /> : null}
 
         {orderedSelection.length === 0 ? (
           <div className="board-empty">
@@ -160,12 +181,26 @@ export default function App() {
                 loaded={loadedByID[run.id]}
                 loading={Boolean(pendingIDs[run.id])}
                 error={errorsByID[run.id]}
-                groups={visibleMetricGroups}
+                groups={metricGroups}
               />
             ))}
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function PhaseLegend({ phases }) {
+  return (
+    <div className="phase-legend">
+      <span className="phase-legend-label">Phases</span>
+      {phases.map((name) => (
+        <span className="phase-legend-item" key={name}>
+          <i style={{ backgroundColor: phaseColors[name] ?? phaseColors.unknown }} />
+          {phaseLabels[name] ?? name}
+        </span>
+      ))}
     </div>
   );
 }
@@ -176,9 +211,7 @@ function Sidebar({
   pendingIDs,
   accentByID,
   booting,
-  showLatency,
   onToggleRun,
-  onToggleLatency,
 }) {
   return (
     <aside className="sidebar">
@@ -204,11 +237,10 @@ function Sidebar({
                     onClick={() => onToggleRun(run.id)}
                   >
                     <span className="run-check">
-                      {selected ? <Check size={12} strokeWidth={3} /> : null}
+                      {selected ? <Check size={9} strokeWidth={3} /> : null}
                     </span>
                     <span className="run-info">
-                      <strong>{meta.server ?? run.id}</strong>
-                      <small>{meta.runtime ?? meta.language ?? 'runtime'}</small>
+                      {meta.runtime ?? meta.language ?? meta.server ?? run.id}
                     </span>
                     {pendingIDs[run.id] ? <Loader2 size={14} className="spin" /> : null}
                   </button>
@@ -217,15 +249,6 @@ function Sidebar({
             })
           )}
         </ul>
-      </div>
-
-      <div className="sidebar-section">
-        <span className="sidebar-label">Overlays</span>
-        <label className="switch">
-          <input type="checkbox" checked={showLatency} onChange={(event) => onToggleLatency(event.target.checked)} />
-          <span className="switch-track" aria-hidden="true"><span /></span>
-          <span>Latency charts</span>
-        </label>
       </div>
     </aside>
   );
@@ -239,10 +262,8 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups })
     <section className="bench-column" style={{ '--accent': accent, animationDelay: `${index * 70}ms` }}>
       <header className="column-header">
         <div className="column-title">
-          <span className="column-dot" />
           <div>
-            <strong>{meta.server ?? run.id}</strong>
-            <small>{meta.runtime ?? meta.language ?? 'runtime'}</small>
+            <strong>{meta.runtime ?? meta.language ?? meta.server ?? run.id}</strong>
           </div>
         </div>
         {status ? <RunStatusBadge status={status} /> : null}
@@ -330,9 +351,7 @@ function runStatus(loaded) {
 function MetricChart({ group, loaded, phases }) {
   const data = loaded?.timeline ?? [];
   const maxElapsed = loaded?.maxElapsed ?? 1;
-  const series = group.id === 'connections'
-    ? group.series.filter((entry) => entry.key !== 'targetConnections')
-    : group.series;
+  const series = group.series;
   const [surfaceRef, surfaceSize] = useElementSize();
   const chartReady = surfaceSize.width > 0 && surfaceSize.height > 0;
 
@@ -361,7 +380,7 @@ function MetricChart({ group, loaded, phases }) {
                 x2={phase.end}
                 yAxisId="left"
                 fill={phaseColors[phase.name] ?? phaseColors.unknown}
-                fillOpacity={0.1}
+                fillOpacity={0.14}
                 strokeOpacity={0}
               />
             ))}
@@ -379,6 +398,8 @@ function MetricChart({ group, loaded, phases }) {
             />
             <YAxis
               yAxisId="left"
+              domain={group.yDomain}
+              allowDataOverflow={Boolean(group.yDomain)}
               tickLine={false}
               axisLine={false}
               width={40}

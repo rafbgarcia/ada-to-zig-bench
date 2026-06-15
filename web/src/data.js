@@ -1,59 +1,78 @@
 export const metricGroups = [
   {
     id: 'connections',
-    title: 'Connection Load',
-    description: 'Configured connection target, loadgen active connections, and server active connections.',
+    title: 'Active Connections',
+    description: 'Active connections reported by the measured server process.',
     unit: '',
     series: [
-      { key: 'targetConnections', label: 'Target', color: '#475467' },
-      { key: 'loadgenConnections', label: 'Loadgen active', color: '#2563eb' },
-      { key: 'serverConnections', label: 'Server active', color: '#0f766e' },
+      { key: 'serverConnections', label: 'Active connections', color: '#0f766e' },
     ],
   },
   {
     id: 'work',
-    title: 'Request Work',
-    description: 'Client-observed success rate, server responses, and in-flight requests.',
+    title: 'Successful Responses',
+    description: 'Successful /json responses per second from the measured server process.',
     unit: '/s',
-    dualAxis: true,
     series: [
-      { key: 'loadgenReceivedPerSecond', label: 'Success RPS', color: '#2563eb', unit: '/s' },
-      { key: 'serverResponsesPerSecond', label: 'Server responses', color: '#0f766e', unit: '/s' },
-      { key: 'activeRequests', label: 'In flight', color: '#7c3aed', axis: 'right' },
+      { key: 'responses2xxPerSecond', label: 'Responses', color: '#0f766e', unit: '/s' },
     ],
   },
   {
-    id: 'resources',
-    title: 'CPU And Memory',
-    description: 'Server process CPU and resident memory sampled externally by the collector.',
+    id: 'inflight',
+    title: 'In-Flight Requests',
+    description: 'Current requests active in the measured server process.',
     unit: '',
-    dualAxis: true,
+    series: [
+      { key: 'activeRequests', label: 'In flight', color: '#7c3aed' },
+    ],
+  },
+  {
+    id: 'cpu',
+    title: 'CPU Percentage',
+    description: 'Server process CPU percentage sampled externally by the collector.',
+    unit: '%',
+    series: [
+      { key: 'cpuPercent', label: 'CPU', color: '#b42318', unit: '%' },
+    ],
+  },
+  {
+    id: 'memory',
+    title: 'RSS Memory',
+    description: 'Server process resident memory sampled externally by the collector.',
+    unit: 'MB',
     series: [
       { key: 'rssMb', label: 'RSS', color: '#0891b2', unit: 'MB' },
-      { key: 'cpuPercent', label: 'CPU', color: '#b42318', axis: 'right', unit: '%' },
     ],
   },
   {
-    id: 'process',
-    title: 'Process Shape',
-    description: 'Open file descriptors and thread count for the measured server process.',
+    id: 'fds',
+    title: 'Open File Descriptors',
+    description: 'Open file descriptors for the measured server process.',
     unit: '',
     series: [
-      { key: 'openFds', label: 'Open FDs', color: '#334155' },
+      { key: 'openFds', label: 'Open FDs', color: '#666666' },
+    ],
+  },
+  {
+    id: 'threads',
+    title: 'Threads',
+    description: 'Thread count for the measured server process.',
+    unit: '',
+    series: [
       { key: 'threads', label: 'Threads', color: '#7c3aed' },
     ],
   },
-  {
-    id: 'efficiency',
-    title: 'Resource Efficiency',
-    description: 'Derived resource cost normalized by live connection and request volume.',
-    unit: '',
-    series: [
-      { key: 'rssMbPer10kConnections', label: 'RSS / 10k conns', color: '#0891b2', unit: 'MB' },
-      { key: 'fdsPerConnection', label: 'FDs / conn', color: '#334155' },
-      { key: 'cpuPercentPer10kRps', label: 'CPU% / 10k RPS', color: '#b42318', unit: '%' },
-    ],
-  },
+  // {
+  //   id: 'efficiency',
+  //   title: 'Resource Efficiency',
+  //   description: 'Derived resource cost normalized by live connection and request volume.',
+  //   unit: '',
+  //   series: [
+  //     { key: 'rssMbPer10kConnections', label: 'RSS / 10k conns', color: '#0891b2', unit: 'MB' },
+  //     { key: 'fdsPerConnection', label: 'FDs / conn', color: '#334155' },
+  //     { key: 'cpuPercentPer10kRps', label: 'CPU% / 10k RPS', color: '#b42318', unit: '%' },
+  //   ],
+  // },
   {
     id: 'runtime',
     title: 'Runtime Memory',
@@ -66,48 +85,41 @@ export const metricGroups = [
   },
   {
     id: 'errors',
-    title: 'Errors And Saturation',
-    description: 'Server-side request errors, non-2xx responses, loadgen failures, and missed dispatch capacity.',
+    title: 'Server Errors And TCP Pressure',
+    description: 'Invalid request responses and kernel TCP queue pressure.',
     unit: '/s',
     series: [
-      { key: 'serverErrorsPerSecond', label: 'Server errors', color: '#dc2626', unit: '/s' },
-      { key: 'responses4xxPerSecond', label: '4xx responses', color: '#f59e0b', unit: '/s' },
-      { key: 'responses5xxPerSecond', label: '5xx responses', color: '#991b1b', unit: '/s' },
-      { key: 'loadgenErrorsPerSecond', label: 'Loadgen failures', color: '#475467', unit: '/s' },
-      { key: 'connectionRetriesPerSecond', label: 'Connection retries', color: '#d97706', unit: '/s' },
-      { key: 'connectionFailuresPerSecond', label: 'Connection failures', color: '#be123c', unit: '/s' },
-      { key: 'dispatchMissesPerSecond', label: 'Dispatch misses', color: '#7c3aed', unit: '/s' },
+      { key: 'serverErrorsPerSecond', label: 'Invalid requests', color: '#dc2626', unit: '/s' },
       { key: 'tcpListenDropsDelta', label: 'Listen drops', color: '#b45309', unit: '/s' },
       { key: 'tcpListenOverflowsDelta', label: 'Listen overflows', color: '#9f1239', unit: '/s' },
       { key: 'tcpBacklogDropDelta', label: 'Backlog drops', color: '#a16207', unit: '/s' },
       { key: 'tcpReqQFullDropDelta', label: 'Full queue drops', color: '#881337', unit: '/s' },
     ],
   },
-  {
-    id: 'latency',
-    title: 'Latency Signal',
-    description: 'Client-observed response latency, kept as a secondary saturation signal.',
-    unit: 'ms',
-    secondary: true,
-    series: [
-      { key: 'p50LatencyMs', label: 'p50', color: '#14b8a6', unit: 'ms' },
-      { key: 'p90LatencyMs', label: 'p90', color: '#f59e0b', unit: 'ms' },
-      { key: 'p99LatencyMs', label: 'p99', color: '#ef4444', unit: 'ms' },
-      { key: 'maxLatencyMs', label: 'Max', color: '#7c3aed', unit: 'ms' },
-    ],
-  },
 ];
 
 export const phaseColors = {
-  baseline: '#eef2f7',
-  ramp: '#dbeafe',
-  settle: '#dcfce7',
-  traffic: '#ffedd5',
-  stabilize: '#ede9fe',
-  ramp_failed: '#fee2e2',
-  payload_sweep: '#ccfbf1',
-  cooldown: '#f2f4f7',
-  unknown: '#f8fafc',
+  baseline: '#64748b',
+  ramp: '#2563eb',
+  settle: '#16a34a',
+  traffic: '#f97316',
+  stabilize: '#7c3aed',
+  ramp_failed: '#dc2626',
+  payload_sweep: '#0d9488',
+  cooldown: '#94a3b8',
+  unknown: '#cbd5e1',
+};
+
+export const phaseLabels = {
+  baseline: 'Baseline',
+  ramp: 'Ramp',
+  settle: 'Settle',
+  traffic: 'Traffic',
+  stabilize: 'Stabilize',
+  ramp_failed: 'Ramp failed',
+  payload_sweep: 'Payload sweep',
+  cooldown: 'Cooldown',
+  unknown: 'Unknown',
 };
 
 export async function fetchRuns() {
@@ -273,6 +285,7 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       activeRequests: numberValue(activity.active_requests),
       serverRequestsPerSecond: numberValue(activity.requests_started_per_second),
       serverResponsesPerSecond: numberValue(activity.responses_completed_per_second),
+      responses2xxPerSecond: numberValue(activity.responses_2xx_per_second),
       responses4xxPerSecond: numberValue(activity.responses_4xx_per_second),
       responses5xxPerSecond: numberValue(activity.responses_5xx_per_second),
       serverErrorsPerSecond: numberValue(activity.request_errors_per_second),
@@ -302,8 +315,8 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       heapTotalMb: numberValue(runtime.heap_total_mb),
     });
     const row = rows[rows.length - 1];
-    const normalizedConnections = row.loadgenConnections || row.serverConnections || row.tcpEstablished || 0;
-    const successfulRps = row.loadgenReceivedPerSecond || row.serverResponsesPerSecond || 0;
+    const normalizedConnections = row.serverConnections || row.tcpEstablished || row.loadgenConnections || 0;
+    const successfulRps = row.responses2xxPerSecond || row.serverResponsesPerSecond || row.loadgenReceivedPerSecond || 0;
     row.rssMbPer10kConnections = normalizedConnections > 0 ? row.rssMb / (normalizedConnections / 10000) : null;
     row.fdsPerConnection = normalizedConnections > 0 && row.openFds != null ? row.openFds / normalizedConnections : null;
     row.cpuPercentPer10kRps = successfulRps > 0 ? row.cpuPercent / (successfulRps / 10000) : null;
