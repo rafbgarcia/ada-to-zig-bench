@@ -210,9 +210,14 @@ For a benchmark result to be considered accurate for comparison, the published `
 - `complete: true`
 - `success: true`
 - `total_errors: 0`
+- `total_connection_failures: 0`
 - `total_sent == total_received`
 
-`total_dispatch_misses` MAY be non-zero in open-loop mode. Dispatch misses are a saturation signal, not a contract failure, but they must be considered when comparing achieved throughput.
+`success` means the measured payload sweep completed without load-generator response, protocol, checksum, dispatch, connection, or missing-response errors. `complete` only means every configured stage ran to completion.
+
+`total_dispatch_misses` MAY be non-zero in open-loop mode. Dispatch misses are a saturation signal, not a response correctness failure, but they must be considered when comparing achieved throughput.
+
+Benchmark runners SHOULD warm the server with valid `POST /json` requests before the measured payload sweep and exclude warmup work from primary load-generator totals. Implementations SHOULD tolerate this warmup like normal measured traffic; server-side activity counters may include warmup unless the runner restarts or resets the server before measurement.
 
 ## Current Implementation Assessment
 

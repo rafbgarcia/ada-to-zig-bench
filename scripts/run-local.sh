@@ -8,6 +8,8 @@ REQUESTS_PER_SECOND="${4:-100000}"
 WORK_MODE="${WORK_MODE:-open-loop}"
 PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 8192}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-10}"
+WARMUP_SECONDS="${WARMUP_SECONDS:-5}"
+WARMUP_REQUESTS_PER_SECOND="${WARMUP_REQUESTS_PER_SECOND:-1000}"
 CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
 CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
 
@@ -130,6 +132,8 @@ PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
 PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
 REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
 WORK_MODE="$WORK_MODE" \
+WARMUP_SECONDS="$WARMUP_SECONDS" \
+WARMUP_REQUESTS_PER_SECOND="$WARMUP_REQUESTS_PER_SECOND" \
 CONNECTION_RETRIES="$CONNECTION_RETRIES" \
 CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
 STARTED_AT="$started_at" \
@@ -152,6 +156,8 @@ const metadata = {
   payload_sweep_bytes: process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_sweep_seconds: Number(process.env.PAYLOAD_SWEEP_SECONDS),
   work_mode: process.env.WORK_MODE,
+  warmup_seconds: Number(process.env.WARMUP_SECONDS),
+  warmup_requests_per_second: Number(process.env.WARMUP_REQUESTS_PER_SECOND),
   target_requests_per_second: Number(process.env.REQUESTS_PER_SECOND),
   target_messages_per_second: Number(process.env.REQUESTS_PER_SECOND),
   connection_retries: Number(process.env.CONNECTION_RETRIES),
@@ -195,7 +201,7 @@ go build -o "$COLLECTOR_BIN" "$ROOT_DIR/collector/cmd/collector"
 ) > "$RUN_WORK_DIR/collector.log" 2>&1 &
 COLLECTOR_PID="$!"
 
-echo "running loadgen: ${WORK_MODE} mode, ${REQUESTS_PER_SECOND} req/s, ${CLIENT_CONNECTIONS} client connections, payload sweep [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each, ${CONNECTION_RETRIES} retries after ${CONNECTION_RETRY_DELAY}"
+echo "running loadgen: ${WORK_MODE} mode, ${REQUESTS_PER_SECOND} req/s, ${CLIENT_CONNECTIONS} client connections, ${WARMUP_SECONDS}s warmup at ${WARMUP_REQUESTS_PER_SECOND} req/s, payload sweep [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each, ${CONNECTION_RETRIES} retries after ${CONNECTION_RETRY_DELAY}"
 go build -o "$LOADGEN_BIN" "$ROOT_DIR/loadgen/cmd/loadgen"
 LOADGEN_STATUS=0
 set +e
@@ -207,6 +213,8 @@ set +e
     --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
     --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
     --requests-per-second "$REQUESTS_PER_SECOND" \
+    --warmup-seconds "$WARMUP_SECONDS" \
+    --warmup-requests-per-second "$WARMUP_REQUESTS_PER_SECOND" \
     --work-mode "$WORK_MODE" \
     --connection-retries "$CONNECTION_RETRIES" \
     --connection-retry-delay "$CONNECTION_RETRY_DELAY" \

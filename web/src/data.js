@@ -85,12 +85,14 @@ export const metricGroups = [
 
 export const phaseColors = {
   setup: '#64748b',
+  warmup: '#d97706',
   payload_sweep: '#0d9488',
   unknown: '#cbd5e1',
 };
 
 export const phaseLabels = {
   setup: 'Setup',
+  warmup: 'Warmup',
   payload_sweep: 'Payload sweep',
   unknown: 'Unknown',
 };

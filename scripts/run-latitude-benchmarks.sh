@@ -26,6 +26,7 @@ LATITUDE_BILLING="${LATITUDE_BILLING:-hourly}"
 LATITUDE_SSH_KEYS="${LATITUDE_SSH_KEYS:-}"
 LATITUDE_KEEP_INFRA="${LATITUDE_KEEP_INFRA:-0}"
 LATITUDE_PROVISION_ATTEMPTS="${LATITUDE_PROVISION_ATTEMPTS:-2}"
+LATITUDE_REBOOT_BETWEEN_SERVERS="${LATITUDE_REBOOT_BETWEEN_SERVERS:-1}"
 SSH_READY_TIMEOUT_SECONDS="${SSH_READY_TIMEOUT_SECONDS:-600}"
 SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
@@ -36,6 +37,8 @@ PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
 PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 8192}"
 PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-10}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
+WARMUP_SECONDS="${WARMUP_SECONDS:-5}"
+WARMUP_REQUESTS_PER_SECOND="${WARMUP_REQUESTS_PER_SECOND:-1000}"
 WORK_MODE="${WORK_MODE:-open-loop}"
 CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
 CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
@@ -80,6 +83,7 @@ Environment:
   LATITUDE_OPERATING_SYSTEM   default: ubuntu_24_04_x64_lts
   LATITUDE_BILLING            default: hourly
   LATITUDE_PROVISION_ATTEMPTS default: 2
+  LATITUDE_REBOOT_BETWEEN_SERVERS default: 1; reboot both benchmark hosts between server suites
   SSH_USER                    default: distro user inferred from LATITUDE_OPERATING_SYSTEM
   SSH_READY_TIMEOUT_SECONDS   default: 600
   SSH_CONNECT_TIMEOUT_SECONDS default: 5
@@ -89,6 +93,8 @@ Environment:
   PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 8192" payload sizes
   PAYLOAD_SWEEP_SECONDS       default: 10 per payload size
   REQUESTS_PER_SECOND         default: 100000 request rate
+  WARMUP_SECONDS              default: 5 pre-measurement POST /json warmup seconds
+  WARMUP_REQUESTS_PER_SECOND  default: 1000 pre-measurement warmup request rate
   WORK_MODE                   default: open-loop; use fixed-work for same request count per stage
   CONNECTION_RETRIES          default: 3 failed connection dial/warmup retries
   CONNECTION_RETRY_DELAY      default: 1s between connection retries
@@ -229,17 +235,25 @@ main() {
   (( SSH_READY_TIMEOUT_SECONDS > 0 )) || fail "SSH_READY_TIMEOUT_SECONDS must be greater than zero"
   [[ "$SSH_CONNECT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || fail "invalid SSH connect timeout: $SSH_CONNECT_TIMEOUT_SECONDS"
   (( SSH_CONNECT_TIMEOUT_SECONDS > 0 )) || fail "SSH_CONNECT_TIMEOUT_SECONDS must be greater than zero"
+  [[ "$WARMUP_SECONDS" =~ ^[0-9]+$ ]] || fail "invalid warmup duration: $WARMUP_SECONDS"
+  [[ "$WARMUP_REQUESTS_PER_SECOND" =~ ^[0-9]+$ ]] || fail "invalid warmup request rate: $WARMUP_REQUESTS_PER_SECOND"
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
   log "request rate: ${REQUESTS_PER_SECOND}/s; client connections: $CLIENT_CONNECTIONS"
+  log "warmup: ${WARMUP_SECONDS}s at ${WARMUP_REQUESTS_PER_SECOND}/s"
   log "payload sweep: [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each"
   log "server target ports: $REMOTE_PORTS"
 
   create_infrastructure
   prepare_hosts
 
+  local index=0
   for server in "${MISSING_SERVERS[@]}"; do
+    if (( index > 0 )); then
+      reboot_between_suites
+    fi
     run_server_suite "$server"
+    index=$((index + 1))
   done
 
   log "completed all missing benchmarks"
@@ -257,13 +271,21 @@ benchmark_complete() {
     --argjson expectedPayloadBytes "$PAYLOAD_BYTES" \
     --argjson expectedTargetRPS "$REQUESTS_PER_SECOND" \
     --argjson expectedSweep "$(payload_sweep_json)" \
-    --argjson expectedSweepSeconds "$PAYLOAD_SWEEP_SECONDS" '
+    --argjson expectedSweepSeconds "$PAYLOAD_SWEEP_SECONDS" \
+    --argjson expectedWarmupSeconds "$WARMUP_SECONDS" \
+    --argjson expectedWarmupRPS "$WARMUP_REQUESTS_PER_SECOND" '
     ((.client_connections // -1) == $expectedClientConnections)
     and ((.payload_bytes // -1) == $expectedPayloadBytes)
     and ((.target_requests_per_second // .target_messages_per_second // -1) == $expectedTargetRPS)
     and (((.payload_sweep_bytes // []) | sort) == ($expectedSweep | sort))
     and ((.payload_sweep_seconds // 0) == $expectedSweepSeconds)
-    and (((.complete // false) == true) or ((.success // false) == true))
+    and ((.warmup_seconds // 0) == $expectedWarmupSeconds)
+    and ((.warmup_requests_per_second // 0) == $expectedWarmupRPS)
+    and ((.complete // false) == true)
+    and ((.success // false) == true)
+    and ((.total_errors // 0) == 0)
+    and ((.total_connection_failures // 0) == 0)
+    and ((.total_sent // -1) == (.total_received // -2))
   ' "$summary" >/dev/null 2>&1
 }
 
@@ -731,6 +753,30 @@ remote_root_bash_command() {
   fi
 }
 
+tune_remote_host() {
+  local ip="$1"
+  local role="$2"
+  local bench_nofile
+  bench_nofile="$(required_nofile)"
+  log "applying benchmark kernel and file-limit tuning on $role host $ip"
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command) -- $bench_nofile" <<'REMOTE'
+set -euo pipefail
+BENCH_NOFILE="$1"
+sysctl -w fs.nr_open="$BENCH_NOFILE" >/dev/null
+sysctl -w fs.file-max="$((BENCH_NOFILE * 2))" >/dev/null
+sysctl -w net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.ip_local_port_range="1024 65535" >/dev/null
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null || true
+sysctl -w net.ipv4.tcp_max_tw_buckets="$((BENCH_NOFILE * 2))" >/dev/null || true
+ulimit -n "$BENCH_NOFILE"
+{
+  printf '* soft nofile %s\n' "$BENCH_NOFILE"
+  printf '* hard nofile %s\n' "$BENCH_NOFILE"
+  printf 'root soft nofile %s\n' "$BENCH_NOFILE"
+  printf 'root hard nofile %s\n' "$BENCH_NOFILE"
+} >/etc/security/limits.d/99-bench.conf
+REMOTE
+}
+
 prepare_hosts() {
   log "creating source archive"
   local archive
@@ -752,26 +798,12 @@ prepare_hosts() {
 upload_and_prepare_server() {
   local ip="$1"
   local archive="$2"
-  local bench_nofile
-  bench_nofile="$(required_nofile)"
   log "preparing server host $ip"
+  tune_remote_host "$ip" "server"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command) -- $bench_nofile" <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
 set -euo pipefail
-BENCH_NOFILE="$1"
 BENCH_USER="${SUDO_USER:-${USER:-root}}"
-sysctl -w fs.nr_open="$BENCH_NOFILE" >/dev/null
-sysctl -w fs.file-max="$((BENCH_NOFILE * 2))" >/dev/null
-sysctl -w net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.ip_local_port_range="1024 65535" >/dev/null
-sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null || true
-sysctl -w net.ipv4.tcp_max_tw_buckets="$((BENCH_NOFILE * 2))" >/dev/null || true
-ulimit -n "$BENCH_NOFILE"
-{
-  printf '* soft nofile %s\n' "$BENCH_NOFILE"
-  printf '* hard nofile %s\n' "$BENCH_NOFILE"
-  printf 'root soft nofile %s\n' "$BENCH_NOFILE"
-  printf 'root hard nofile %s\n' "$BENCH_NOFILE"
-} >/etc/security/limits.d/99-bench.conf
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
@@ -791,26 +823,12 @@ REMOTE
 upload_and_prepare_loadgen() {
   local ip="$1"
   local archive="$2"
-  local bench_nofile
-  bench_nofile="$(required_nofile)"
   log "preparing loadgen host $ip"
+  tune_remote_host "$ip" "loadgen"
   scp "${SSH_OPTS[@]}" "$archive" "$SSH_USER@$ip:/tmp/bench-src.tar.gz" >/dev/null
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command) -- $bench_nofile" <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" "$(remote_root_bash_command)" <<'REMOTE'
 set -euo pipefail
-BENCH_NOFILE="$1"
 BENCH_USER="${SUDO_USER:-${USER:-root}}"
-sysctl -w fs.nr_open="$BENCH_NOFILE" >/dev/null
-sysctl -w fs.file-max="$((BENCH_NOFILE * 2))" >/dev/null
-sysctl -w net.core.somaxconn=65535 net.ipv4.tcp_max_syn_backlog=65535 net.ipv4.ip_local_port_range="1024 65535" >/dev/null
-sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null || true
-sysctl -w net.ipv4.tcp_max_tw_buckets="$((BENCH_NOFILE * 2))" >/dev/null || true
-ulimit -n "$BENCH_NOFILE"
-{
-  printf '* soft nofile %s\n' "$BENCH_NOFILE"
-  printf '* hard nofile %s\n' "$BENCH_NOFILE"
-  printf 'root soft nofile %s\n' "$BENCH_NOFILE"
-  printf 'root hard nofile %s\n' "$BENCH_NOFILE"
-} >/etc/security/limits.d/99-bench.conf
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
@@ -825,6 +843,59 @@ mkdir -p /opt/bench/.tmp
 go build -o /opt/bench/.tmp/loadgen-bin ./loadgen/cmd/loadgen
 chown -R "$BENCH_USER" /opt/bench
 REMOTE
+}
+
+reboot_between_suites() {
+  if [[ "$LATITUDE_REBOOT_BETWEEN_SERVERS" != "1" ]]; then
+    log "skipping inter-suite reboot because LATITUDE_REBOOT_BETWEEN_SERVERS=$LATITUDE_REBOOT_BETWEEN_SERVERS"
+    return
+  fi
+
+  log "rebooting Latitude hosts before the next server suite"
+  request_reboot "$SERVER_IPV4" "server"
+  request_reboot "$LOADGEN_IPV4" "loadgen"
+  wait_for_ssh_down "$SERVER_IPV4" "server"
+  wait_for_ssh_down "$LOADGEN_IPV4" "loadgen"
+  wait_for_ssh "$SERVER_IPV4" "server"
+  wait_for_ssh "$LOADGEN_IPV4" "loadgen"
+  tune_remote_host "$SERVER_IPV4" "server"
+  tune_remote_host "$LOADGEN_IPV4" "loadgen"
+}
+
+request_reboot() {
+  local ip="$1"
+  local role="$2"
+  log "requesting reboot on $role host $ip"
+  set +e
+  if [[ "$SSH_USER" == "root" ]]; then
+    ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" 'nohup sh -c "sleep 1; reboot" >/dev/null 2>&1 &' >/dev/null 2>&1
+  else
+    ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" 'nohup sudo -n sh -c "sleep 1; reboot" >/dev/null 2>&1 &' >/dev/null 2>&1
+  fi
+  local status=$?
+  set -e
+  if (( status != 0 )); then
+    log "reboot command on $role host $ip returned status $status; waiting for SSH anyway"
+  fi
+}
+
+wait_for_ssh_down() {
+  local ip="$1"
+  local role="$2"
+  local status
+  log "waiting for SSH to drop on rebooting $role host $ip"
+  for _ in {1..60}; do
+    set +e
+    ssh "${SSH_OPTS[@]}" -o "ConnectTimeout=$SSH_CONNECT_TIMEOUT_SECONDS" "$SSH_USER@$ip" 'true' >/dev/null 2>&1
+    status=$?
+    set -e
+    if (( status != 0 )); then
+      log "SSH dropped on $role host $ip"
+      return
+    fi
+    sleep 1
+  done
+  log "SSH did not drop within 60s on $role host $ip; continuing with readiness wait"
 }
 
 run_server_suite() {
@@ -863,7 +934,7 @@ run_server_suite() {
     fail "suite completed for $server but loadgen artifacts were incomplete; artifacts were preserved"
   fi
   if (( status == 2 )); then
-    log "suite completed for $server with a target miss; artifacts were preserved"
+    fail "suite completed for $server with loadgen validation errors; artifacts were preserved"
   elif (( status != 0 )); then
     fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
   fi
@@ -967,6 +1038,8 @@ run_loadgen() {
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
     CLIENT_CONNECTIONS="$CLIENT_CONNECTIONS" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
+    WARMUP_SECONDS="$WARMUP_SECONDS" \
+    WARMUP_REQUESTS_PER_SECOND="$WARMUP_REQUESTS_PER_SECOND" \
     WORK_MODE="$WORK_MODE" \
     CONNECTION_RETRIES="$CONNECTION_RETRIES" \
     CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
@@ -997,6 +1070,8 @@ done
   --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
   --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
   --requests-per-second "$REQUESTS_PER_SECOND" \
+  --warmup-seconds "$WARMUP_SECONDS" \
+  --warmup-requests-per-second "$WARMUP_REQUESTS_PER_SECOND" \
   --work-mode "$WORK_MODE" \
   --connection-retries "$CONNECTION_RETRIES" \
   --connection-retry-delay "$CONNECTION_RETRY_DELAY" \
@@ -1030,6 +1105,8 @@ write_suite_metadata() {
   REMOTE_PORTS="$REMOTE_PORTS" \
   PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
   PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
+  WARMUP_SECONDS="$WARMUP_SECONDS" \
+  WARMUP_REQUESTS_PER_SECOND="$WARMUP_REQUESTS_PER_SECOND" \
   node <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
@@ -1058,6 +1135,8 @@ const metadata = {
   payload_sweep_bytes: summary.payload_sweep_bytes ?? process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_sweep_seconds: summary.payload_sweep_seconds ?? Number(process.env.PAYLOAD_SWEEP_SECONDS),
   work_mode: summary.work_mode ?? process.env.WORK_MODE ?? 'open-loop',
+  warmup_seconds: summary.warmup_seconds ?? Number(process.env.WARMUP_SECONDS),
+  warmup_requests_per_second: summary.warmup_requests_per_second ?? Number(process.env.WARMUP_REQUESTS_PER_SECOND),
   target_requests_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_messages_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   connection_retries: summary.connection_retries ?? null,
@@ -1070,6 +1149,8 @@ const metadata = {
     primary_metrics: ['requests_started_per_second', 'responses_completed_per_second', 'rss_mb', 'cpu_percent', 'threads', 'open_fds'],
     notes: [
       'Load generation is isolated from the measured server host.',
+      'Latitude hosts are rebooted between server suites by default to reduce cross-run kernel and TCP state carryover.',
+      'A pre-measurement warmup is run before payload sweep counters are reset.',
       'Target payload sizes run at a fixed request rate for the configured duration.',
       'Multiple server ports are available for client fanout when the configured client pool is large.',
     ],

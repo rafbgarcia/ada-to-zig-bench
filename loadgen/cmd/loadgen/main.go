@@ -72,6 +72,15 @@ type summary struct {
 	ClientConnections       int            `json:"client_connections"`
 	ConnectionRetries       int            `json:"connection_retries"`
 	ConnectionRetryDelayMS  int64          `json:"connection_retry_delay_ms"`
+	WarmupSeconds           int            `json:"warmup_seconds"`
+	WarmupRequestsPerSecond int            `json:"warmup_requests_per_second"`
+	WarmupPayloadBytes      int            `json:"warmup_payload_bytes"`
+	WarmupScheduled         uint64         `json:"warmup_scheduled"`
+	WarmupDispatched        uint64         `json:"warmup_dispatched"`
+	WarmupSent              uint64         `json:"warmup_sent"`
+	WarmupReceived          uint64         `json:"warmup_received"`
+	WarmupErrors            uint64         `json:"warmup_errors"`
+	WarmupDispatchMisses    uint64         `json:"warmup_dispatch_misses"`
 	PayloadBytes            int            `json:"payload_bytes"`
 	PayloadSweepBytes       []int          `json:"payload_sweep_bytes"`
 	PayloadSweepSeconds     int            `json:"payload_sweep_seconds"`
@@ -194,6 +203,26 @@ type sendResult struct {
 	FinishedAt time.Time
 }
 
+type counterSnapshot struct {
+	Scheduled      uint64
+	Dispatched     uint64
+	Sent           uint64
+	Received       uint64
+	Errors         uint64
+	DispatchMisses uint64
+}
+
+func (current counterSnapshot) subtract(previous counterSnapshot) counterSnapshot {
+	return counterSnapshot{
+		Scheduled:      current.Scheduled - previous.Scheduled,
+		Dispatched:     current.Dispatched - previous.Dispatched,
+		Sent:           current.Sent - previous.Sent,
+		Received:       current.Received - previous.Received,
+		Errors:         current.Errors - previous.Errors,
+		DispatchMisses: current.DispatchMisses - previous.DispatchMisses,
+	}
+}
+
 type loadgenErrorSample struct {
 	Timestamp      string `json:"ts"`
 	ElapsedSeconds int64  `json:"elapsed_seconds"`
@@ -228,6 +257,8 @@ func main() {
 	var payloadSweepBytesRaw string
 	var payloadSweepSeconds int
 	var requestsPerSecond int
+	var warmupSeconds int
+	var warmupRequestsPerSecond int
 	var workModeRaw string
 	var connectionRetries int
 	var connectionRetryDelay time.Duration
@@ -240,6 +271,8 @@ func main() {
 	flag.StringVar(&payloadSweepBytesRaw, "payload-sweep-bytes", "", "comma- or space-separated payload sizes to send; defaults to --payload-bytes")
 	flag.IntVar(&payloadSweepSeconds, "payload-sweep-seconds", 10, "seconds to send each payload size in --payload-sweep-bytes")
 	flag.IntVar(&requestsPerSecond, "requests-per-second", 100_000, "global target requests per second")
+	flag.IntVar(&warmupSeconds, "warmup-seconds", 0, "seconds to warm the server with POST /json before measured payload stages")
+	flag.IntVar(&warmupRequestsPerSecond, "warmup-requests-per-second", 0, "warmup request rate; defaults to --requests-per-second when --warmup-seconds is positive")
 	flag.StringVar(&workModeRaw, "work-mode", string(workModeOpenLoop), "request work mode: open-loop drops missed dispatch slots; fixed-work keeps dispatching until every scheduled slot is sent")
 	flag.IntVar(&connectionRetries, "connection-retries", 3, "failed connection dial/warmup retries before a connection slot is marked failed")
 	flag.DurationVar(&connectionRetryDelay, "connection-retry-delay", time.Second, "delay between failed connection dial/warmup retries")
@@ -257,7 +290,10 @@ func main() {
 	if err != nil {
 		fatalf("parse work mode: %v", err)
 	}
-	if clientConnections <= 0 || payloadBytes < 0 || payloadSweepSeconds <= 0 || requestsPerSecond <= 0 || connectionRetries < 0 || connectionRetryDelay < 0 {
+	if warmupSeconds > 0 && warmupRequestsPerSecond == 0 {
+		warmupRequestsPerSecond = requestsPerSecond
+	}
+	if clientConnections <= 0 || payloadBytes < 0 || payloadSweepSeconds <= 0 || requestsPerSecond <= 0 || warmupSeconds < 0 || warmupRequestsPerSecond < 0 || connectionRetries < 0 || connectionRetryDelay < 0 {
 		fatalf("invalid arguments")
 	}
 
@@ -309,7 +345,7 @@ func main() {
 	latencyCh := make(chan latencySample, 1_000_000)
 	registerCh := make(chan *clientConn, clientConnections)
 	marker := atomic.Value{}
-	marker.Store(runMarker{Phase: "payload_sweep", StageIndex: 0, WorkMode: string(mode), ClientConns: clientConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadSweepBytes[0]})
+	marker.Store(runMarker{Phase: "setup", StageIndex: -1, WorkMode: string(mode), ClientConns: clientConnections, TargetRPS: 0, PayloadBytes: payloadSweepBytes[0]})
 
 	var activeMu sync.Mutex
 	activeConns := make([]*clientConn, 0, clientConnections)
@@ -325,6 +361,39 @@ func main() {
 
 	openClientConnections(runCtx, clientConnections, targets, payload, connectionRetries, connectionRetryDelay, &active, &sent, &received, &errorsCount, &inFlight, &connectionAttempts, &connectionRetryAttempts, &connectionFailures, latencyCh, registerCh, &wg, &marker, errorLog)
 	waitForClientSetup(runCtx, clientConnections, &activeMu, &activeConns, &active, &connectionFailures)
+
+	warmupPayloadBytes := payloadSweepBytes[0]
+	warmupSummary := counterSnapshot{}
+	if warmupSeconds > 0 && warmupRequestsPerSecond > 0 && runCtx.Err() == nil {
+		warmupPayload := strings.Repeat("x", warmupPayloadBytes)
+		marker.Store(runMarker{Phase: "warmup", StageIndex: -1, WorkMode: string(mode), ClientConns: clientConnections, TargetRPS: warmupRequestsPerSecond, PayloadBytes: warmupPayloadBytes})
+
+		warmupMetricsCtx, cancelWarmupMetrics := context.WithCancel(runCtx)
+		var warmupMetricsWG sync.WaitGroup
+		warmupMetricsWG.Add(1)
+		go func() {
+			defer warmupMetricsWG.Done()
+			sampleMetrics(warmupMetricsCtx, time.Now().UTC(), &marker, metricsFile, &inFlight, &scheduled, &dispatched, &sent, &received, &errorsCount, &dispatchMisses, latencyCh, func([]latencySample) {})
+		}()
+
+		warmupStart := snapshotCounters(&scheduled, &dispatched, &sent, &received, &errorsCount, &dispatchMisses)
+		now := time.Now().UTC()
+		sendRequests(runCtx, now, now.Add(time.Duration(warmupSeconds)*time.Second), warmupRequestsPerSecond, -1, warmupPayload, mode, &requestID, &scheduled, &dispatched, &errorsCount, &dispatchMisses, &activeMu, &activeConns, &marker, errorLog)
+		waitForInFlight(runCtx, &activeMu, &activeConns)
+		warmupSummary = snapshotCounters(&scheduled, &dispatched, &sent, &received, &errorsCount, &dispatchMisses).subtract(warmupStart)
+		cancelWarmupMetrics()
+		warmupMetricsWG.Wait()
+	}
+	setupAndWarmupErrors := errorsCount.Load()
+	drainLatencySamples(latencyCh)
+	scheduled.Store(0)
+	dispatched.Store(0)
+	sent.Store(0)
+	received.Store(0)
+	errorsCount.Store(0)
+	dispatchMisses.Store(0)
+	requestID.Store(0)
+	marker.Store(runMarker{Phase: "payload_sweep", StageIndex: 0, WorkMode: string(mode), ClientConns: clientConnections, TargetRPS: requestsPerSecond, PayloadBytes: payloadSweepBytes[0]})
 
 	measurementStartedAt := time.Now().UTC()
 	var metricsWG sync.WaitGroup
@@ -421,6 +490,12 @@ func main() {
 		urls = append(urls, target.raw)
 	}
 
+	totalSent := sent.Load()
+	totalReceived := received.Load()
+	totalErrors := setupAndWarmupErrors + errorsCount.Load()
+	totalConnectionFailures := connectionFailures.Load()
+	success := complete && totalErrors == 0 && totalConnectionFailures == 0 && totalSent == totalReceived
+
 	s := summary{
 		URL:                     urls[0],
 		URLs:                    urls,
@@ -428,6 +503,15 @@ func main() {
 		ClientConnections:       clientConnections,
 		ConnectionRetries:       connectionRetries,
 		ConnectionRetryDelayMS:  connectionRetryDelay.Milliseconds(),
+		WarmupSeconds:           warmupSeconds,
+		WarmupRequestsPerSecond: warmupRequestsPerSecond,
+		WarmupPayloadBytes:      warmupPayloadBytes,
+		WarmupScheduled:         warmupSummary.Scheduled,
+		WarmupDispatched:        warmupSummary.Dispatched,
+		WarmupSent:              warmupSummary.Sent,
+		WarmupReceived:          warmupSummary.Received,
+		WarmupErrors:            warmupSummary.Errors,
+		WarmupDispatchMisses:    warmupSummary.DispatchMisses,
 		PayloadBytes:            payloadBytes,
 		PayloadSweepBytes:       payloadSweepBytes,
 		PayloadSweepSeconds:     payloadSweepSeconds,
@@ -437,17 +521,17 @@ func main() {
 		FinishedAt:              time.Now().UTC().Format(time.RFC3339),
 		TotalScheduled:          scheduled.Load(),
 		TotalDispatched:         dispatched.Load(),
-		TotalSent:               sent.Load(),
-		TotalReceived:           received.Load(),
-		TotalErrors:             errorsCount.Load(),
+		TotalSent:               totalSent,
+		TotalReceived:           totalReceived,
+		TotalErrors:             totalErrors,
 		TotalConnectionAttempts: connectionAttempts.Load(),
 		TotalConnectionRetries:  connectionRetryAttempts.Load(),
-		TotalConnectionFailures: connectionFailures.Load(),
+		TotalConnectionFailures: totalConnectionFailures,
 		LoadgenErrorSamples:     errorLog.samples(),
 		LoadgenErrorsDropped:    errorLog.droppedSamples(),
 		TotalDispatchMisses:     dispatchMisses.Load(),
 		Complete:                complete,
-		Success:                 complete,
+		Success:                 success,
 		P50LatencyMS:            overallP50,
 		P90LatencyMS:            overallP90,
 		P99LatencyMS:            overallP99,
@@ -457,6 +541,12 @@ func main() {
 
 	writeJSON(filepath.Join(outputDir, "summary.json"), s)
 	fmt.Printf("wrote run data to %s\n", outputDir)
+	if !complete {
+		os.Exit(1)
+	}
+	if !success {
+		os.Exit(2)
+	}
 }
 
 func (c *clientConn) run(ctx context.Context) {
@@ -1018,6 +1108,27 @@ func waitForClientSetup(ctx context.Context, clientConnections int, activeMu *sy
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func snapshotCounters(scheduled *atomic.Uint64, dispatched *atomic.Uint64, sent *atomic.Uint64, received *atomic.Uint64, errorsCount *atomic.Uint64, dispatchMisses *atomic.Uint64) counterSnapshot {
+	return counterSnapshot{
+		Scheduled:      scheduled.Load(),
+		Dispatched:     dispatched.Load(),
+		Sent:           sent.Load(),
+		Received:       received.Load(),
+		Errors:         errorsCount.Load(),
+		DispatchMisses: dispatchMisses.Load(),
+	}
+}
+
+func drainLatencySamples(latencyCh <-chan latencySample) {
+	for {
+		select {
+		case <-latencyCh:
+		default:
+			return
 		}
 	}
 }

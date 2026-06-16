@@ -18,6 +18,8 @@
     "payload_bytes": { "type": "integer", "minimum": 0 },
     "payload_sweep_bytes": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
     "payload_sweep_seconds": { "type": "integer", "minimum": 1 },
+    "warmup_seconds": { "type": "integer", "minimum": 0 },
+    "warmup_requests_per_second": { "type": "integer", "minimum": 0 },
     "target_requests_per_second": { "type": "integer", "minimum": 0 },
     "target_messages_per_second": { "type": "integer", "minimum": 0 },
     "connection_retries": { "type": "integer", "minimum": 0 },

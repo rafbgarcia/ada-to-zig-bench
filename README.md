@@ -57,6 +57,8 @@ client_connections:        8192
 payload_bytes:             256
 payload_sweep_bytes:       "256 1024 4096 8192"
 payload_sweep_seconds:     10
+warmup_seconds:            5
+warmup_requests/sec:       1000
 requests/sec:              100000
 work_mode:                 open-loop
 ```
@@ -103,6 +105,7 @@ LATITUDE_LOADGEN_PLAN=f4-metal-small
 LATITUDE_OPERATING_SYSTEM=ubuntu_24_04_x64_lts
 LATITUDE_BILLING=hourly
 LATITUDE_PROVISION_ATTEMPTS=2
+LATITUDE_REBOOT_BETWEEN_SERVERS=1
 SSH_USER=ubuntu
 SSH_READY_TIMEOUT_SECONDS=600
 SSH_CONNECT_TIMEOUT_SECONDS=5
@@ -112,23 +115,27 @@ WORK_MODE=open-loop
 PAYLOAD_BYTES=256
 PAYLOAD_SWEEP_BYTES="256 1024 4096 8192"
 PAYLOAD_SWEEP_SECONDS=10
+WARMUP_SECONDS=5
+WARMUP_REQUESTS_PER_SECOND=1000
 CONNECTION_RETRIES=3
 CONNECTION_RETRY_DELAY=1s
 ```
 
 The server listens on 32 ports by default (`8080..8111`) so large client pools can spread outbound TCP sockets over multiple destination tuples. Override `REMOTE_PORTS` when running on Latitude, or the optional `ports` array in `servers/<server>/bench.json` for local runs, if you need a different fanout.
 
-The Latitude runner raises Linux limits on both hosts before the measured run. It sets `fs.nr_open`, `fs.file-max`, `net.core.somaxconn`, `net.ipv4.tcp_max_syn_backlog`, `net.ipv4.ip_local_port_range`, `net.ipv4.tcp_tw_reuse`, and a per-process `nofile` limit derived from `CLIENT_CONNECTIONS`.
+The Latitude runner raises Linux limits on both hosts before the measured run. It sets `fs.nr_open`, `fs.file-max`, `net.core.somaxconn`, `net.ipv4.tcp_max_syn_backlog`, `net.ipv4.ip_local_port_range`, `net.ipv4.tcp_tw_reuse`, and a per-process `nofile` limit derived from `CLIENT_CONNECTIONS`. When more than one server suite is run, the runner reboots both Latitude hosts between suites by default and reapplies the benchmark kernel/file-limit tuning after SSH returns. Set `LATITUDE_REBOOT_BETWEEN_SERVERS=0` only for exploratory runs where cross-run TCP/kernel-state carryover is acceptable.
 
 `server_metrics.jsonl` contains external process/resource samples, including CPU, RSS, threads, open FDs, Linux TCP socket state counts, and Linux `TcpExt` backlog/drop counters where available. `activity_metrics.jsonl` contains in-process server work counters: active requests, request totals, response totals, status buckets, and server-side request errors. Treat these server-side counters as validation and resource correlation. The primary throughput truth is `loadgen_metrics.jsonl`, which records cumulative scheduled, dispatched, sent, received, error, and dispatch-miss counters from the isolated load generator; rates should be derived from those cumulative counters and sample timestamps.
 
-`summary.json.total_errors` captures all response, protocol, checksum, dispatch, and connection-attempt failures observed by the load generator. Failed dial or `/health` warmup attempts are retried up to `CONNECTION_RETRIES` times with `CONNECTION_RETRY_DELAY` between attempts; defaults are 3 retries and 1 second. `summary.json.total_connection_attempts`, `summary.json.total_connection_retries`, and `summary.json.total_connection_failures` separate retry recovery from terminal failed client slots. `loadgen_errors.jsonl` is a bounded sample of failures and includes attempt metadata for connection attempts; `summary.json.loadgen_error_samples` and `summary.json.loadgen_errors_dropped` show how much was written or omitted. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive client already had an in-flight request at dispatch time. Completed runs are still published when these counters are non-zero so failures and saturation can be correlated with server-side resource metrics. Orchestration fails only when the load generator cannot produce a complete summary or required artifacts are missing.
+Before the measured payload sweep, the load generator runs a configurable warmup using valid `POST /json` traffic. Warmup counters are recorded separately in `summary.json.warmup_*`; primary load-generator totals and latency percentiles are reset before the measured sweep.
+
+`summary.json.total_errors` captures all response, protocol, checksum, dispatch, and connection-attempt failures observed by the load generator. Failed dial or `/health` connection setup attempts are retried up to `CONNECTION_RETRIES` times with `CONNECTION_RETRY_DELAY` between attempts; defaults are 3 retries and 1 second. `summary.json.total_connection_attempts`, `summary.json.total_connection_retries`, and `summary.json.total_connection_failures` separate retry recovery from terminal failed client slots. `loadgen_errors.jsonl` is a bounded sample of failures and includes attempt metadata for connection attempts; `summary.json.loadgen_error_samples` and `summary.json.loadgen_errors_dropped` show how much was written or omitted. `summary.json.total_dispatch_misses` and `loadgen_metrics.jsonl.dispatch_misses_per_second` capture target-rate saturation where every live keep-alive client already had an in-flight request at dispatch time. `summary.json.complete` means every configured measured stage ran; `summary.json.success` requires a complete run with zero load-generator errors, zero terminal connection failures, and `total_sent == total_received`. The Latitude runner only treats clean successful artifacts as reusable benchmark results.
 
 `WORK_MODE=open-loop` is the default benchmark mode. It schedules request slots at the configured rate and records dispatch misses when all connections are busy, then waits for all dispatched in-flight requests to finish before moving to the next stage. This mode is best for saturation analysis: target rate, actual dispatch rate, completed rate, missed slots, latency growth, and drain time.
 
 `WORK_MODE=fixed-work` keeps the same per-stage target request count but does not drop missed slots. If the server is saturated, the load generator delays dispatch until a keep-alive client is available and then continues until every scheduled request for that stage has been dispatched and completed. This mode is best for same-work comparisons: each server receives the same request count, and stage elapsed/drain time shows how long it took to finish.
 
-`CLIENT_CONNECTIONS` controls the size of the load generator's keep-alive client pool. The measured benchmark stages are only the configured `PAYLOAD_SWEEP_BYTES`; each payload size runs at `REQUESTS_PER_SECOND` for `PAYLOAD_SWEEP_SECONDS`.
+`CLIENT_CONNECTIONS` controls the size of the load generator's keep-alive client pool. The measured benchmark stages are only the configured `PAYLOAD_SWEEP_BYTES`; each payload size runs at `REQUESTS_PER_SECOND` for `PAYLOAD_SWEEP_SECONDS` after the pre-measurement warmup.
 
 ## GitHub Workflow
 
@@ -154,7 +161,7 @@ Required repository variable or secret:
 LATITUDE_SSH_KEYS
 ```
 
-Useful repository variables mirror the local environment names: `LATITUDE_PROJECT`, `LATITUDE_SITE`, `LATITUDE_SERVER_PLAN`, `LATITUDE_LOADGEN_PLAN`, `CLIENT_CONNECTIONS`, `REQUESTS_PER_SECOND`, `PAYLOAD_BYTES`, `PAYLOAD_SWEEP_BYTES`, and `PAYLOAD_SWEEP_SECONDS`.
+Useful repository variables mirror the local environment names: `LATITUDE_PROJECT`, `LATITUDE_SITE`, `LATITUDE_SERVER_PLAN`, `LATITUDE_LOADGEN_PLAN`, `CLIENT_CONNECTIONS`, `REQUESTS_PER_SECOND`, `PAYLOAD_BYTES`, `PAYLOAD_SWEEP_BYTES`, `PAYLOAD_SWEEP_SECONDS`, `WARMUP_SECONDS`, and `WARMUP_REQUESTS_PER_SECOND`.
 
 ## Replay UI
 

@@ -318,12 +318,12 @@ function RunFailureSummary({ loaded, status }) {
 function runStatus(loaded) {
   if (!loaded?.summary) return null;
   const summary = loaded.summary;
-  if (summary.success === true || summary.complete === true) {
-    if ((summary.total_errors ?? 0) > 0 || (summary.total_connection_failures ?? 0) > 0 || (summary.total_dispatch_misses ?? 0) > 0) {
-      return { kind: 'warning', label: 'Warnings' };
-    }
-    return { kind: 'success', label: 'Complete' };
+  if (summary.success === true) {
+    return (summary.total_dispatch_misses ?? 0) > 0
+      ? { kind: 'warning', label: 'Saturated' }
+      : { kind: 'success', label: 'Complete' };
   }
+  if (summary.complete === true) return { kind: 'failed', label: 'Invalid' };
   if (summary.complete === false) return { kind: 'failed', label: 'Incomplete' };
   return { kind: 'failed', label: 'Failed' };
 }
