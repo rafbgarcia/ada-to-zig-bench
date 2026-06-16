@@ -20,6 +20,8 @@ The current implementations are:
 - `servers/c-libmicrohttpd`: C server using libmicrohttpd and jansson
 - `servers/cpp-boost-beast`: C++ Boost.Beast/Asio server using nlohmann-json
 - `servers/csharp-aspnetcore`: C# ASP.NET Core minimal API server on Kestrel
+- `servers/elixir-plug-cowboy`: Elixir Plug.Cowboy server using Jason
+- `servers/erlang-cowboy`: Erlang Cowboy server using Jiffy
 - `servers/go-nethttp`: Go stdlib `net/http` server
 - `servers/java-httpserver`: Java JDK `HttpServer` using Gson
 - `servers/python-aiohttp`: Python `aiohttp.web` server

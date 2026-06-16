@@ -1,0 +1,11 @@
+{
+  "id": "erlang-cowboy",
+  "language": "Erlang",
+  "runtime": "Erlang/OTP + Cowboy + Jiffy",
+  "suite": "http-json",
+  "toolchains": ["erlang"],
+  "implementation": "Cowboy + Jiffy",
+  "concurrency": "BEAM process-per-connection",
+  "install": "rebar3 as prod compile",
+  "run": "erl -pa _build/prod/lib/*/ebin -noshell -eval '{ok, _} = application:ensure_all_started(bench_erlang_cowboy), receive stop -> ok end.'"
+}

@@ -109,6 +109,15 @@ install_java() {
   fi
 }
 
+install_erlang() {
+  install_apt_once erlang-dev erlang-src erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools erlang-xmerl rebar3
+}
+
+install_elixir() {
+  install_erlang
+  install_apt_once elixir
+}
+
 for toolchain in "${TOOLCHAINS[@]}"; do
   case "$toolchain" in
     ada) install_apt_once gnat gprbuild libgnatcoll-dev ;;
@@ -116,6 +125,8 @@ for toolchain in "${TOOLCHAINS[@]}"; do
     c) install_apt_once libmicrohttpd-dev libjansson-dev ;;
     cpp) install_apt_once libboost-dev nlohmann-json3-dev ;;
     csharp) install_dotnet ;;
+    elixir) install_elixir ;;
+    erlang) install_erlang ;;
     go) install_go ;;
     java) install_java ;;
     node) install_node ;;
@@ -136,6 +147,8 @@ for toolchain in "${TOOLCHAINS[@]}"; do
     c) require_command cc ; require_command pkg-config ;;
     cpp) require_command c++ ; require_command pkg-config ;;
     csharp) require_command dotnet ;;
+    elixir) require_command elixir ; require_command mix ;;
+    erlang) require_command erl ; require_command rebar3 ;;
     go) require_command go ;;
     java) require_command java ; require_command javac ;;
     node) require_command node ;;

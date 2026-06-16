@@ -1,0 +1,8 @@
+{application, bench_erlang_cowboy,
+ [{description, "HTTP JSON benchmark server using Erlang Cowboy"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {bench_erlang_cowboy_app, []}},
+  {applications, [kernel, stdlib, cowboy, jiffy]},
+  {env, []},
+  {modules, []}]}.

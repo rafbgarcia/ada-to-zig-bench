@@ -3,6 +3,8 @@ dist/
 bin/
 obj/
 .venv/
+_build/
+deps/
 .zig-cache/
 zig-out/
 out/

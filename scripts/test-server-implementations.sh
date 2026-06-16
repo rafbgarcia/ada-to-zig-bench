@@ -215,6 +215,8 @@ require_toolchains() {
       c) require_command cc ; require_command pkg-config ;;
       cpp) require_command c++ ; require_command pkg-config ;;
       csharp) require_command dotnet ;;
+      elixir) require_command elixir ; require_command mix ;;
+      erlang) require_command erl ; require_command rebar3 ;;
       go) require_command go ;;
       java) require_java_21 ;;
       node) require_command node ;;

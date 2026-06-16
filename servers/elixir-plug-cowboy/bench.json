@@ -1,0 +1,11 @@
+{
+  "id": "elixir-plug-cowboy",
+  "language": "Elixir",
+  "runtime": "Elixir + Plug.Cowboy + Jason",
+  "suite": "http-json",
+  "toolchains": ["elixir"],
+  "implementation": "Plug.Cowboy + Jason",
+  "concurrency": "BEAM process-per-request",
+  "install": "MIX_ENV=prod mix local.hex --force && MIX_ENV=prod mix local.rebar --force && MIX_ENV=prod mix deps.get && MIX_ENV=prod mix compile",
+  "run": "MIX_ENV=prod mix run --no-halt"
+}
