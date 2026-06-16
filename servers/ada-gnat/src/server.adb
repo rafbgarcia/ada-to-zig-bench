@@ -16,6 +16,7 @@ procedure Server is
    use Ada.Strings.Unbounded;
    use GNAT.Sockets;
    use GNATCOLL.JSON;
+   use type Ada.Calendar.Time;
 
    Max_Safe_Integer : constant Long_Long_Integer := 9_007_199_254_740_991;
    Started_At       : constant Ada.Calendar.Time := Ada.Calendar.Clock;
