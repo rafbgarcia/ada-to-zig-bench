@@ -6,6 +6,7 @@ require 'webrick'
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 STARTED_AT_MONOTONIC = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+DEFAULT_MAX_CLIENTS = 512
 
 class Counters
   attr_reader :lock
@@ -88,6 +89,7 @@ end
 def main
   host = ENV.fetch('HOST', '127.0.0.1')
   ports = parse_ports(ENV['PORTS'] || ENV['PORT'] || '8080')
+  max_clients = positive_integer(ENV['WEBRICK_MAX_CLIENTS'], DEFAULT_MAX_CLIENTS)
   counters = Counters.new
   activity = JsonlWriter.new(ENV['ACTIVITY_METRICS_PATH'])
   events = JsonlWriter.new(ENV['SERVER_EVENTS_PATH'])
@@ -101,6 +103,7 @@ def main
       AccessLog: [],
       Logger: WEBrick::Log.new($stderr, WEBrick::Log::WARN),
       DoNotReverseLookup: true,
+      MaxClients: max_clients,
       RequestTimeout: 120
     )
     mount_handlers(server, counters, events)
@@ -264,6 +267,15 @@ def parse_ports(value)
   end
   raise ArgumentError, 'PORTS must contain at least one TCP port' if ports.empty?
   ports
+end
+
+def positive_integer(value, fallback)
+  return fallback if value.nil? || value.empty?
+
+  parsed = Integer(value, 10)
+  raise ArgumentError, "invalid positive integer #{value.inspect}" unless parsed.positive?
+
+  parsed
 end
 
 main
