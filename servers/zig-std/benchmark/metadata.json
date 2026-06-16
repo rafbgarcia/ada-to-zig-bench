@@ -1,0 +1,92 @@
+{
+  "id": "zig-std",
+  "server": "zig-std",
+  "language": "Zig",
+  "runtime": "Zig std.http.Server",
+  "toolchains": [
+    "zig"
+  ],
+  "implementation": "std.http.Server",
+  "concurrency": "thread-per-connection",
+  "suite": "http-json",
+  "server_command": "./zig-out/bin/bench-zig-std",
+  "url": "http://64.34.84.83:8080/json",
+  "urls": [
+    "http://64.34.84.83:8080/json",
+    "http://64.34.84.83:8081/json",
+    "http://64.34.84.83:8082/json",
+    "http://64.34.84.83:8083/json",
+    "http://64.34.84.83:8084/json",
+    "http://64.34.84.83:8085/json",
+    "http://64.34.84.83:8086/json",
+    "http://64.34.84.83:8087/json",
+    "http://64.34.84.83:8088/json",
+    "http://64.34.84.83:8089/json",
+    "http://64.34.84.83:8090/json",
+    "http://64.34.84.83:8091/json",
+    "http://64.34.84.83:8092/json",
+    "http://64.34.84.83:8093/json",
+    "http://64.34.84.83:8094/json",
+    "http://64.34.84.83:8095/json",
+    "http://64.34.84.83:8096/json",
+    "http://64.34.84.83:8097/json",
+    "http://64.34.84.83:8098/json",
+    "http://64.34.84.83:8099/json",
+    "http://64.34.84.83:8100/json",
+    "http://64.34.84.83:8101/json",
+    "http://64.34.84.83:8102/json",
+    "http://64.34.84.83:8103/json",
+    "http://64.34.84.83:8104/json",
+    "http://64.34.84.83:8105/json",
+    "http://64.34.84.83:8106/json",
+    "http://64.34.84.83:8107/json",
+    "http://64.34.84.83:8108/json",
+    "http://64.34.84.83:8109/json",
+    "http://64.34.84.83:8110/json",
+    "http://64.34.84.83:8111/json"
+  ],
+  "client_connections": 8192,
+  "payload_bytes": 256,
+  "payload_sweep_bytes": [
+    256,
+    4096,
+    8192
+  ],
+  "payload_sweep_seconds": 20,
+  "work_mode": "open-loop",
+  "warmup_seconds": 10,
+  "warmup_requests_per_second": 1000,
+  "target_requests_per_second": 50000,
+  "target_messages_per_second": 50000,
+  "connection_retries": 3,
+  "connection_retry_delay_ms": 1000,
+  "started_at": "2026-06-16T17:22:26Z",
+  "git_commit": "44389ef",
+  "benchmark_recommendations": {
+    "topology": "dedicated Latitude server host plus dedicated Latitude loadgen host in the same site",
+    "request_shape": "HTTP/1.1 keep-alive POST /json with JSON parse, validation, checksum, and JSON response serialization",
+    "primary_metrics": [
+      "requests_started_per_second",
+      "responses_completed_per_second",
+      "rss_mb",
+      "cpu_percent",
+      "threads",
+      "open_fds"
+    ],
+    "notes": [
+      "Load generation is isolated from the measured server host.",
+      "Latitude hosts are rebooted between server suites by default to reduce cross-run kernel and TCP state carryover.",
+      "A pre-measurement warmup is run before payload sweep counters are reset.",
+      "Target payload sizes run at a fixed request rate for the configured duration.",
+      "Multiple server ports are available for client fanout when the configured client pool is large."
+    ]
+  },
+  "infrastructure": {
+    "provider": "latitude.sh",
+    "site": "ASH",
+    "server_plan": "f4-metal-small",
+    "loadgen_plan": "f4-metal-small",
+    "server_public_ip": "64.34.84.83",
+    "loadgen_public_ip": "206.223.228.85"
+  }
+}
