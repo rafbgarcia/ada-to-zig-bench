@@ -809,6 +809,7 @@ BENCH_USER="${SUDO_USER:-${USER:-root}}"
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
+chown -R "$BENCH_USER" /opt/bench
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git build-essential jq procps unzip xz-utils
 cd /opt/bench
@@ -834,6 +835,7 @@ BENCH_USER="${SUDO_USER:-${USER:-root}}"
 rm -rf /opt/bench
 mkdir -p /opt/bench
 tar -xzf /tmp/bench-src.tar.gz -C /opt/bench
+chown -R "$BENCH_USER" /opt/bench
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git build-essential jq procps
 curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz -o /tmp/go.tar.gz
@@ -975,9 +977,14 @@ cd /opt/bench
 manifest="servers/$SERVER_NAME/bench.json"
 test -f "$manifest"
 run_command="$(node scripts/manifest-field.mjs "$manifest" run)"
+install_command="$(node scripts/manifest-field.mjs "$manifest" install)"
 test -n "$run_command"
-rm -rf .tmp/cloud-server
-mkdir -p .tmp/cloud-server
+if [[ -n "$install_command" ]]; then
+  printf '[latitude-bench] installing %s dependencies: %s\n' "$SERVER_NAME" "$install_command"
+  (cd "servers/$SERVER_NAME" && bash -c "$install_command")
+fi
+rm -rf /opt/bench/.tmp/cloud-server
+mkdir -p /opt/bench/.tmp/cloud-server
 (
   cd "servers/$SERVER_NAME"
   HOST="$HOST" PORTS="$PORTS" \

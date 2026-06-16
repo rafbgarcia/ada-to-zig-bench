@@ -9,6 +9,7 @@ JAVA_MAJOR="${JAVA_MAJOR:-21}"
 DOTNET_INSTALL_DIR="${DOTNET_INSTALL_DIR:-/opt/dotnet}"
 ELIXIR_VERSION="${ELIXIR_VERSION:-1.15.8}"
 ELIXIR_INSTALL_DIR="${ELIXIR_INSTALL_DIR:-/opt/elixir}"
+REBAR3_VERSION="${REBAR3_VERSION:-3.24.0}"
 
 usage() {
   cat <<'EOF'
@@ -111,8 +112,25 @@ install_java() {
   fi
 }
 
+installed_rebar3_version() {
+  if ! command -v rebar3 >/dev/null 2>&1; then return 1; fi
+  rebar3 --version | awk '{ print $2; exit }'
+}
+
+install_rebar3() {
+  local current_version
+  current_version="$(installed_rebar3_version || true)"
+  if [[ "$current_version" == "$REBAR3_VERSION" ]]; then
+    return
+  fi
+
+  curl -fsSL "https://github.com/erlang/rebar3/releases/download/${REBAR3_VERSION}/rebar3" -o /usr/local/bin/rebar3
+  chmod 755 /usr/local/bin/rebar3
+}
+
 install_erlang() {
-  install_apt_once erlang-dev erlang-src erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools erlang-xmerl rebar3
+  install_apt_once erlang-dev erlang-src erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools erlang-xmerl
+  install_rebar3
 }
 
 installed_elixir_version() {
