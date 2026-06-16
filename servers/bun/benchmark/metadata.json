@@ -1,0 +1,92 @@
+{
+  "id": "bun",
+  "server": "bun",
+  "language": "JavaScript",
+  "runtime": "Bun",
+  "toolchains": [
+    "bun"
+  ],
+  "implementation": "Bun.serve",
+  "concurrency": "event-loop",
+  "suite": "http-json",
+  "server_command": "bun src/server.js",
+  "url": "http://206.223.228.97:8080/json",
+  "urls": [
+    "http://206.223.228.97:8080/json",
+    "http://206.223.228.97:8081/json",
+    "http://206.223.228.97:8082/json",
+    "http://206.223.228.97:8083/json",
+    "http://206.223.228.97:8084/json",
+    "http://206.223.228.97:8085/json",
+    "http://206.223.228.97:8086/json",
+    "http://206.223.228.97:8087/json",
+    "http://206.223.228.97:8088/json",
+    "http://206.223.228.97:8089/json",
+    "http://206.223.228.97:8090/json",
+    "http://206.223.228.97:8091/json",
+    "http://206.223.228.97:8092/json",
+    "http://206.223.228.97:8093/json",
+    "http://206.223.228.97:8094/json",
+    "http://206.223.228.97:8095/json",
+    "http://206.223.228.97:8096/json",
+    "http://206.223.228.97:8097/json",
+    "http://206.223.228.97:8098/json",
+    "http://206.223.228.97:8099/json",
+    "http://206.223.228.97:8100/json",
+    "http://206.223.228.97:8101/json",
+    "http://206.223.228.97:8102/json",
+    "http://206.223.228.97:8103/json",
+    "http://206.223.228.97:8104/json",
+    "http://206.223.228.97:8105/json",
+    "http://206.223.228.97:8106/json",
+    "http://206.223.228.97:8107/json",
+    "http://206.223.228.97:8108/json",
+    "http://206.223.228.97:8109/json",
+    "http://206.223.228.97:8110/json",
+    "http://206.223.228.97:8111/json"
+  ],
+  "client_connections": 8192,
+  "payload_bytes": 256,
+  "payload_sweep_bytes": [
+    256,
+    4096,
+    8192
+  ],
+  "payload_sweep_seconds": 20,
+  "work_mode": "open-loop",
+  "warmup_seconds": 10,
+  "warmup_requests_per_second": 1000,
+  "target_requests_per_second": 50000,
+  "target_messages_per_second": 50000,
+  "connection_retries": 3,
+  "connection_retry_delay_ms": 1000,
+  "started_at": "2026-06-16T16:02:18Z",
+  "git_commit": "9adffbe",
+  "benchmark_recommendations": {
+    "topology": "dedicated Latitude server host plus dedicated Latitude loadgen host in the same site",
+    "request_shape": "HTTP/1.1 keep-alive POST /json with JSON parse, validation, checksum, and JSON response serialization",
+    "primary_metrics": [
+      "requests_started_per_second",
+      "responses_completed_per_second",
+      "rss_mb",
+      "cpu_percent",
+      "threads",
+      "open_fds"
+    ],
+    "notes": [
+      "Load generation is isolated from the measured server host.",
+      "Latitude hosts are rebooted between server suites by default to reduce cross-run kernel and TCP state carryover.",
+      "A pre-measurement warmup is run before payload sweep counters are reset.",
+      "Target payload sizes run at a fixed request rate for the configured duration.",
+      "Multiple server ports are available for client fanout when the configured client pool is large."
+    ]
+  },
+  "infrastructure": {
+    "provider": "latitude.sh",
+    "site": "ASH",
+    "server_plan": "f4-metal-small",
+    "loadgen_plan": "f4-metal-small",
+    "server_public_ip": "206.223.228.97",
+    "loadgen_public_ip": "206.223.228.95"
+  }
+}
