@@ -1026,14 +1026,14 @@ if [[ -n "$install_command" ]]; then
 fi
 rm -rf /opt/bench/.tmp/cloud-server
 mkdir -p /opt/bench/.tmp/cloud-server
-RUN_COMMAND="$run_command" nohup setsid bash -c '
+SERVER_NAME="$SERVER_NAME" HOST="$HOST" PORTS="$PORTS" RUN_COMMAND="$run_command" nohup bash -c '
   set -euo pipefail
   cd "/opt/bench/servers/$SERVER_NAME"
-  HOST="$HOST" PORTS="$PORTS" \
-    ACTIVITY_METRICS_PATH="/opt/bench/.tmp/cloud-server/activity_metrics.jsonl" \
-    SERVER_EVENTS_PATH="/opt/bench/.tmp/cloud-server/server_events.jsonl" \
-    RUNTIME_METRICS_PATH="/opt/bench/.tmp/cloud-server/runtime_metrics.jsonl" \
-    bash -c "$RUN_COMMAND"
+  export HOST PORTS
+  export ACTIVITY_METRICS_PATH="/opt/bench/.tmp/cloud-server/activity_metrics.jsonl"
+  export SERVER_EVENTS_PATH="/opt/bench/.tmp/cloud-server/server_events.jsonl"
+  export RUNTIME_METRICS_PATH="/opt/bench/.tmp/cloud-server/runtime_metrics.jsonl"
+  exec bash -c "$RUN_COMMAND"
 ' > /opt/bench/.tmp/cloud-server/server.log 2>&1 < /dev/null &
 echo "$!" > /opt/bench/.tmp/cloud-server/server.pid
 first_port="${PORTS%%,*}"
@@ -1055,7 +1055,7 @@ if ! curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null; then
   tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
   exit 1
 fi
-nohup setsid /opt/bench/.tmp/collector --pid "$(cat /opt/bench/.tmp/cloud-server/server.pid)" --output /opt/bench/.tmp/cloud-server/server_metrics.jsonl --interval 1s > /opt/bench/.tmp/cloud-server/collector.log 2>&1 < /dev/null &
+nohup /opt/bench/.tmp/collector --pid "$(cat /opt/bench/.tmp/cloud-server/server.pid)" --output /opt/bench/.tmp/cloud-server/server_metrics.jsonl --interval 1s > /opt/bench/.tmp/cloud-server/collector.log 2>&1 < /dev/null &
 echo "$!" > /opt/bench/.tmp/cloud-server/collector.pid
 REMOTE
   printf '{"provider":"latitude.sh","server_public_ip":"%s","loadgen_public_ip":"%s","site":"%s","server_plan":"%s","loadgen_plan":"%s"}\n' \
@@ -1105,7 +1105,7 @@ remote_server_stop() {
 set -euo pipefail
 if [[ -f /opt/bench/.tmp/cloud-server/collector.pid ]]; then
   collector_pid="$(cat /opt/bench/.tmp/cloud-server/collector.pid)"
-  kill -- -"$collector_pid" 2>/dev/null || true
+  pkill -TERM -P "$collector_pid" 2>/dev/null || true
   kill "$collector_pid" 2>/dev/null || true
   for _ in {1..50}; do
     kill -0 "$collector_pid" 2>/dev/null || break
@@ -1115,13 +1115,13 @@ if [[ -f /opt/bench/.tmp/cloud-server/collector.pid ]]; then
 fi
 if [[ -f /opt/bench/.tmp/cloud-server/server.pid ]]; then
   server_pid="$(cat /opt/bench/.tmp/cloud-server/server.pid)"
-  kill -- -"$server_pid" 2>/dev/null || true
+  pkill -TERM -P "$server_pid" 2>/dev/null || true
   kill "$server_pid" 2>/dev/null || true
   for _ in {1..100}; do
     kill -0 "$server_pid" 2>/dev/null || break
     sleep 0.1
   done
-  kill -9 -- -"$server_pid" 2>/dev/null || true
+  pkill -KILL -P "$server_pid" 2>/dev/null || true
   kill -9 "$server_pid" 2>/dev/null || true
 fi
 REMOTE
