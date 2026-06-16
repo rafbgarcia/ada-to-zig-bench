@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ZIG_VERSION="${ZIG_VERSION:-0.15.2}"
 GO_VERSION="${GO_VERSION:-1.24.0}"
 NODE_MAJOR="${NODE_MAJOR:-24}"
+JAVA_MAJOR="${JAVA_MAJOR:-21}"
 DOTNET_INSTALL_DIR="${DOTNET_INSTALL_DIR:-/opt/dotnet}"
 
 usage() {
@@ -99,6 +100,15 @@ install_dotnet() {
   ln -sf "$DOTNET_INSTALL_DIR/dotnet" /usr/local/bin/dotnet
 }
 
+install_java() {
+  install_apt_once "openjdk-${JAVA_MAJOR}-jdk"
+  local java_home="/usr/lib/jvm/java-${JAVA_MAJOR}-openjdk-amd64"
+  if [[ -x "$java_home/bin/java" && -x "$java_home/bin/javac" ]]; then
+    update-alternatives --set java "$java_home/bin/java"
+    update-alternatives --set javac "$java_home/bin/javac"
+  fi
+}
+
 for toolchain in "${TOOLCHAINS[@]}"; do
   case "$toolchain" in
     ada) install_apt_once gnat gprbuild libgnatcoll-dev ;;
@@ -107,7 +117,7 @@ for toolchain in "${TOOLCHAINS[@]}"; do
     cpp) install_apt_once libboost-dev nlohmann-json3-dev ;;
     csharp) install_dotnet ;;
     go) install_go ;;
-    java) install_apt_once openjdk-21-jdk ;;
+    java) install_java ;;
     node) install_node ;;
     python) install_apt_once python3 python3-pip python3-venv ;;
     ruby) install_apt_once ruby ruby-webrick ;;

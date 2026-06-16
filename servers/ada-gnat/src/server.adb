@@ -205,7 +205,7 @@ procedure Server is
       return Value;
    end Checksum;
 
-   function Response (Status : Natural; Body : String) return String is
+   function Response (Status : Natural; Response_Body : String) return String is
       Reason : constant String := (case Status is
          when 200 => "OK",
          when 400 => "Bad Request",
@@ -215,8 +215,8 @@ procedure Server is
       return "HTTP/1.1 " & Trim (Natural'Image (Status), Both) & " " & Reason & ASCII.CR & ASCII.LF &
         "Connection: keep-alive" & ASCII.CR & ASCII.LF &
         "Content-Type: application/json" & ASCII.CR & ASCII.LF &
-        "Content-Length: " & Trim (Natural'Image (Body'Length), Both) & ASCII.CR & ASCII.LF &
-        ASCII.CR & ASCII.LF & Body;
+        "Content-Length: " & Trim (Natural'Image (Response_Body'Length), Both) & ASCII.CR & ASCII.LF &
+        ASCII.CR & ASCII.LF & Response_Body;
    end Response;
 
    function Runtime_JSON return String is
@@ -297,14 +297,14 @@ procedure Server is
       Valid := True;
    end Parse_Request_Line;
 
-   function Handle_JSON (Body : String) return String is
+   function Handle_JSON (Request_Body : String) return String is
       Root : JSON_Value;
       ID_Value : JSON_Value;
       Payload_Value : JSON_Value;
       ID : Long_Long_Integer;
    begin
       begin
-         Root := Read (Body);
+         Root := Read (Request_Body);
       exception
          when others =>
             Metrics.Record_Error;
@@ -386,7 +386,7 @@ procedure Server is
             end loop;
 
             declare
-               Body : constant String := Read_Exact (Channel, Content_Length);
+               Request_Body : constant String := Read_Exact (Channel, Content_Length);
                Path : constant String := (if Valid then Path_Only (To_String (Target)) else "");
                Reply : Unbounded_String;
             begin
@@ -403,7 +403,7 @@ procedure Server is
                   Reply := To_Unbounded_String (Response (200, Runtime_JSON));
                elsif To_String (Method) = "POST" and then Path = "/json" then
                   Metrics.Start_Request;
-                  Reply := To_Unbounded_String (Handle_JSON (Body));
+                  Reply := To_Unbounded_String (Handle_JSON (Request_Body));
                   Metrics.Finish_Request;
                else
                   Reply := To_Unbounded_String (Response (404, "{""error"":""not_found""}"));

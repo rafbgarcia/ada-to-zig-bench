@@ -30,6 +30,20 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+require_java_21() {
+  require_command java
+  require_command javac
+
+  local version
+  version="$(javac -version 2>&1 | awk '{print $2}')"
+  local major="${version%%.*}"
+  if [[ "$major" == "1" ]]; then
+    major="$(printf '%s' "$version" | cut -d. -f2)"
+  fi
+  [[ "$major" =~ ^[0-9]+$ ]] || fail "could not parse javac version: $version"
+  (( major >= 21 )) || fail "javac 21 or newer is required for Java virtual threads; found javac $version"
+}
+
 cleanup_server() {
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
     kill "$SERVER_PID" 2>/dev/null || true
@@ -208,7 +222,7 @@ require_toolchains() {
       cpp) require_command c++ ; require_command pkg-config ;;
       csharp) require_command dotnet ;;
       go) require_command go ;;
-      java) require_command java ; require_command javac ;;
+      java) require_java_21 ;;
       node) require_command node ;;
       python) require_command python3 ;;
       ruby) require_command ruby ;;

@@ -111,6 +111,13 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Set up Java
+        if: contains(steps.manifest.outputs.toolchains, 'java')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Set up manifest toolchains
         run: |
           if [ -n "${{ steps.manifest.outputs.toolchains }}" ]; then
