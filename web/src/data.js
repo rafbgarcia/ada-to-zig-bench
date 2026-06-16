@@ -23,6 +23,18 @@ export const metricGroups = [
     ],
   },
   {
+    id: 'latency',
+    title: 'Loadgen Latency',
+    description: 'Client-observed request latency percentiles from the load generator.',
+    unit: 'ms',
+    series: [
+      { key: 'p50LatencyMs', label: 'p50', color: '#14b8a6', unit: 'ms' },
+      { key: 'p90LatencyMs', label: 'p90', color: '#2563eb', unit: 'ms' },
+      { key: 'p99LatencyMs', label: 'p99', color: '#d97706', unit: 'ms' },
+      { key: 'maxLatencyMs', label: 'max', color: '#be123c', unit: 'ms' },
+    ],
+  },
+  {
     id: 'cpu',
     title: 'CPU Percentage',
     description: 'Server process CPU percentage sampled externally by the collector.',
@@ -339,10 +351,10 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       loadgenDispatchedPerSecond: numberValue(loadgen.dispatched_per_second, numberValue(loadgen.sent_per_second)),
       loadgenSentPerSecond: numberValue(loadgen.sent_per_second),
       loadgenReceivedPerSecond: numberValue(loadgen.received_per_second),
-      p50LatencyMs: numberValue(loadgen.p50_latency_ms),
-      p90LatencyMs: numberValue(loadgen.p90_latency_ms),
-      p99LatencyMs: numberValue(loadgen.p99_latency_ms),
-      maxLatencyMs: numberValue(loadgen.max_latency_ms),
+      p50LatencyMs: latencyValue(loadgen, 'p50_latency_ms'),
+      p90LatencyMs: latencyValue(loadgen, 'p90_latency_ms'),
+      p99LatencyMs: latencyValue(loadgen, 'p99_latency_ms'),
+      maxLatencyMs: latencyValue(loadgen, 'max_latency_ms'),
       cpuPercent: numberValue(server.cpu_percent),
       rssMb: numberValue(server.rss_mb ?? bytesToMB(server.rss_bytes)),
       threads: nullableNumber(server.threads),
@@ -470,6 +482,12 @@ function nullableNumber(value) {
 function numberValue(value, fallback = 0) {
   const numeric = Number(value ?? fallback);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function latencyValue(sample, key) {
+  const value = nullableNumber(sample[key]);
+  if (value !== 0) return value;
+  return numberValue(sample.received_per_second) > 0 ? value : null;
 }
 
 function runFileURL(runID, fileName) {

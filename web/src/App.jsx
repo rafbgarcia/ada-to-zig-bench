@@ -334,6 +334,7 @@ function MetricChart({ group, loaded, phases }) {
   const series = group.series;
   const [surfaceRef, surfaceSize] = useElementSize();
   const chartReady = surfaceSize.width > 0 && surfaceSize.height > 0;
+  const hasValues = data.some((row) => series.some((entry) => row[entry.key] != null));
 
   return (
     <article className={`chart-card chart-card-${group.id}`}>
@@ -343,7 +344,7 @@ function MetricChart({ group, loaded, phases }) {
       </div>
 
       <div className="chart-surface" ref={surfaceRef}>
-        {data.length === 0 || !chartReady ? (
+        {data.length === 0 || !chartReady || !hasValues ? (
           <div className="chart-placeholder">No data</div>
         ) : (
           <LineChart
