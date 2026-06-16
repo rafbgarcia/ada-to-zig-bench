@@ -935,14 +935,44 @@ run_server_suite() {
   mv "$local_work_dir" "servers/$server/benchmark"
   log "wrote servers/$server/benchmark"
   if (( artifact_status != 0 )); then
+    print_suite_failure_details "$server" "servers/$server/benchmark"
     fail "suite completed for $server but loadgen artifacts were incomplete; artifacts were preserved"
   fi
   if (( status == 2 )); then
+    print_suite_failure_details "$server" "servers/$server/benchmark"
     fail "suite completed for $server with loadgen validation errors; artifacts were preserved"
   elif (( status != 0 )); then
+    print_suite_failure_details "$server" "servers/$server/benchmark"
     fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
   fi
   run_suite_success_hook "$server" "servers/$server/benchmark"
+}
+
+print_suite_failure_details() {
+  local server="$1"
+  local benchmark_dir="$2"
+
+  log "failure details for $server"
+  if [[ -f "$benchmark_dir/summary.json" ]]; then
+    jq '{success, complete, total_sent, total_received, total_errors, total_connection_failures, total_dispatch_misses, loadgen_error_samples, loadgen_errors_dropped, warmup: {sent: .warmup_sent, received: .warmup_received, errors: .warmup_errors, dispatch_misses: .warmup_dispatch_misses}, stages: [.stages[]? | {index, payload_bytes, sent, received, errors, dispatch_misses, p99_latency_ms, max_latency_ms}]}' "$benchmark_dir/summary.json" >&2 || true
+  else
+    log "summary.json is missing for $server"
+  fi
+
+  if [[ -s "$benchmark_dir/loadgen_errors.jsonl" ]]; then
+    log "first loadgen error samples for $server"
+    head -n 20 "$benchmark_dir/loadgen_errors.jsonl" >&2 || true
+  fi
+
+  if [[ -s "$benchmark_dir/loadgen.log" ]]; then
+    log "loadgen log tail for $server"
+    tail -n 40 "$benchmark_dir/loadgen.log" >&2 || true
+  fi
+
+  if [[ -s "$benchmark_dir/server.log" ]]; then
+    log "server log tail for $server"
+    tail -n 40 "$benchmark_dir/server.log" >&2 || true
+  fi
 }
 
 run_suite_success_hook() {
