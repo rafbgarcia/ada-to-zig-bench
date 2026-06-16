@@ -99,6 +99,8 @@ Environment:
   CONNECTION_RETRIES          default: 3 failed connection dial/warmup retries
   CONNECTION_RETRY_DELAY      default: 1s between connection retries
   REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
+  BENCHMARK_SUITE_SUCCESS_COMMAND optional shell command run after each successful suite;
+                              SERVER_NAME and BENCHMARK_DIR are exported for the command
   LATITUDE_KEEP_INFRA         set to 1 to keep bare metal hosts after the run
 EOF
 }
@@ -938,6 +940,19 @@ run_server_suite() {
   elif (( status != 0 )); then
     fail "suite completed for $server but loadgen exited with status $status; artifacts were preserved"
   fi
+  run_suite_success_hook "$server" "servers/$server/benchmark"
+}
+
+run_suite_success_hook() {
+  local server="$1"
+  local benchmark_dir="$2"
+
+  if [[ -z "${BENCHMARK_SUITE_SUCCESS_COMMAND:-}" ]]; then
+    return
+  fi
+
+  log "running success hook for $server"
+  SERVER_NAME="$server" BENCHMARK_DIR="$benchmark_dir" bash -c "$BENCHMARK_SUITE_SUCCESS_COMMAND"
 }
 
 remote_server_start() {

@@ -111,7 +111,22 @@ jobs:
       - name: Install web and deployment dependencies
         run: npm ci --prefix web
 
+      - name: Configure benchmark artifact commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Run missing Latitude benchmarks
+        env:
+          BENCHMARK_SUITE_SUCCESS_COMMAND: |
+            if [ -z "$(git status --porcelain -- "$BENCHMARK_DIR")" ]; then
+              echo "No benchmark artifact changes for $SERVER_NAME."
+              exit 0
+            fi
+            git add "$BENCHMARK_DIR"
+            git commit -m "Update $SERVER_NAME benchmark artifacts [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
         run: scripts/run-latitude-benchmarks.sh
 
       - name: Build static web assets
@@ -124,8 +139,7 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add servers
           git commit -m "Update benchmark artifacts [skip ci]"
+          git pull --rebase origin main
           git push origin HEAD:main
