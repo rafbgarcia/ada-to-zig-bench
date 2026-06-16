@@ -1,0 +1,98 @@
+{
+  "id": "ada-gnat",
+  "server": "ada-gnat",
+  "language": "Ada",
+  "runtime": "GNAT + GNAT.Sockets + GNATCOLL.JSON",
+  "toolchains": [
+    "ada"
+  ],
+  "implementation": "GNAT.Sockets + GNATCOLL.JSON",
+  "concurrency": "task-per-connection",
+  "suite": "http-json",
+  "server_command": "./server",
+  "url": "http://206.223.228.95:8080/json",
+  "urls": [
+    "http://206.223.228.95:8080/json",
+    "http://206.223.228.95:8081/json",
+    "http://206.223.228.95:8082/json",
+    "http://206.223.228.95:8083/json",
+    "http://206.223.228.95:8084/json",
+    "http://206.223.228.95:8085/json",
+    "http://206.223.228.95:8086/json",
+    "http://206.223.228.95:8087/json",
+    "http://206.223.228.95:8088/json",
+    "http://206.223.228.95:8089/json",
+    "http://206.223.228.95:8090/json",
+    "http://206.223.228.95:8091/json",
+    "http://206.223.228.95:8092/json",
+    "http://206.223.228.95:8093/json",
+    "http://206.223.228.95:8094/json",
+    "http://206.223.228.95:8095/json",
+    "http://206.223.228.95:8096/json",
+    "http://206.223.228.95:8097/json",
+    "http://206.223.228.95:8098/json",
+    "http://206.223.228.95:8099/json",
+    "http://206.223.228.95:8100/json",
+    "http://206.223.228.95:8101/json",
+    "http://206.223.228.95:8102/json",
+    "http://206.223.228.95:8103/json",
+    "http://206.223.228.95:8104/json",
+    "http://206.223.228.95:8105/json",
+    "http://206.223.228.95:8106/json",
+    "http://206.223.228.95:8107/json",
+    "http://206.223.228.95:8108/json",
+    "http://206.223.228.95:8109/json",
+    "http://206.223.228.95:8110/json",
+    "http://206.223.228.95:8111/json"
+  ],
+  "connections": 100000,
+  "connection_targets": [
+    100000
+  ],
+  "payload_bytes": 256,
+  "payload_sweep_bytes": [
+    256,
+    4096,
+    8192
+  ],
+  "payload_sweep_seconds": 5,
+  "work_mode": "open-loop",
+  "target_requests_per_second": 50000,
+  "target_messages_per_second": 50000,
+  "target_connection_rate": 20000,
+  "connection_retries": 3,
+  "connection_retry_delay_ms": 1000,
+  "baseline_seconds": 0,
+  "settle_seconds": 0,
+  "stabilize_seconds": 0,
+  "traffic_seconds": 10,
+  "cooldown_seconds": 0,
+  "started_at": "2026-06-16T00:33:59Z",
+  "git_commit": "c77c69f",
+  "benchmark_recommendations": {
+    "topology": "dedicated Latitude server host plus dedicated Latitude loadgen host in the same site",
+    "request_shape": "HTTP/1.1 keep-alive POST /json with JSON parse, validation, checksum, and JSON response serialization",
+    "primary_metrics": [
+      "active_connections",
+      "requests_started_per_second",
+      "responses_completed_per_second",
+      "rss_mb",
+      "cpu_percent",
+      "threads",
+      "open_fds"
+    ],
+    "notes": [
+      "Load generation is isolated from the measured server host.",
+      "Connections are distributed over multiple server ports to avoid client ephemeral-port exhaustion at 1M connections.",
+      "Connection targets are cumulative inside one continuous run so resource growth can be correlated with server activity."
+    ]
+  },
+  "infrastructure": {
+    "provider": "latitude.sh",
+    "site": "ASH",
+    "server_plan": "f4-metal-small",
+    "loadgen_plan": "f4-metal-small",
+    "server_public_ip": "206.223.228.95",
+    "loadgen_public_ip": "206.223.228.93"
+  }
+}
