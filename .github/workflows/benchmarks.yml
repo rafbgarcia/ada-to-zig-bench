@@ -17,10 +17,10 @@ jobs:
       has-missing-benchmarks: ${{ steps.missing-benchmarks.outputs.has-missing-benchmarks }}
       missing-servers: ${{ steps.missing-benchmarks.outputs.missing-servers }}
     env:
-      BENCHMARK_CONNECTIONS: '100000'
+      CLIENT_CONNECTIONS: '8192'
       PAYLOAD_BYTES: '256'
       PAYLOAD_SWEEP_BYTES: '256 4096 8192'
-      PAYLOAD_SWEEP_SECONDS: '5'
+      PAYLOAD_SWEEP_SECONDS: '10'
       REQUESTS_PER_SECOND: '50000'
     steps:
       - name: Check out repository
@@ -62,17 +62,11 @@ jobs:
       LATITUDE_BILLING: 'hourly'
       SSH_USER: 'ubuntu'
       SSH_READY_TIMEOUT_SECONDS: '600'
-      BENCHMARK_CONNECTIONS: '100000'
+      CLIENT_CONNECTIONS: '8192'
       PAYLOAD_BYTES: '256'
       PAYLOAD_SWEEP_BYTES: '256 4096 8192'
-      PAYLOAD_SWEEP_SECONDS: '5'
+      PAYLOAD_SWEEP_SECONDS: '10'
       REQUESTS_PER_SECOND: '50000'
-      TARGET_CONNECTION_RATE: '20000'
-      BASELINE_SECONDS: '0'
-      SETTLE_SECONDS: '0'
-      STABILIZE_SECONDS: '0'
-      TRAFFIC_SECONDS: '10'
-      COOLDOWN_SECONDS: '0'
       LATITUDE_SSH_PRIVATE_KEY: ${{ secrets.LATITUDE_SSH_PRIVATE_KEY }}
     steps:
       - name: Check out repository

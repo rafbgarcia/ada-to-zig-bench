@@ -229,7 +229,6 @@ procedure Server is
    function Activity_JSON return String is
    begin
       return "{""ts"":""" & Now_ISO & """,""elapsed_seconds"":" & Image (Elapsed_Seconds) &
-        ",""active_connections"":null,""accepted_connections_total"":null,""closed_connections_total"":null" &
         ",""active_requests"":" & Image (Metrics.Active_Requests) &
         ",""requests_started_total"":" & Image (Metrics.Requests_Started) &
         ",""responses_completed_total"":" & Image (Metrics.Responses_Completed) &
@@ -395,8 +394,7 @@ procedure Server is
                   Reply := To_Unbounded_String (Response (404, "{""error"":""not_found""}"));
                elsif To_String (Method) = "GET" and then Path = "/health" then
                   Reply := To_Unbounded_String (Response (200,
-                    "{""ok"":true,""active_connections"":null,""accepted_connections_total"":null,""closed_connections_total"":null" &
-                    ",""active_requests"":" & Image (Metrics.Active_Requests) &
+                    "{""ok"":true,""active_requests"":" & Image (Metrics.Active_Requests) &
                     ",""requests_started_total"":" & Image (Metrics.Requests_Started) &
                     ",""responses_completed_total"":" & Image (Metrics.Responses_Completed) &
                     ",""total_errors"":" & Image (Metrics.Request_Errors) & "}"));

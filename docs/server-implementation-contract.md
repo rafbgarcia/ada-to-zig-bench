@@ -8,7 +8,7 @@ The document format is Markdown because this contract is intended to be reviewed
 
 An implementation is one benchmark entry under `servers/<name>/`. It consists of a `bench.json` manifest and the code needed to start one measured HTTP server process for the `http-json` suite.
 
-The benchmark measures the resource cost of a long-running HTTP/1.1 JSON server process under many persistent TCP connections and a fixed request workload. It is not a general language-speed benchmark.
+The benchmark measures the resource cost of a long-running HTTP/1.1 JSON server process under a fixed-rate payload-size sweep. It is not a general language-speed benchmark.
 
 ## Implementation Manifest
 
@@ -83,7 +83,7 @@ Responses SHOULD keep the connection alive when the request uses keep-alive and 
 { "ok": true }
 ```
 
-It MAY include current counters such as `active_connections`, `active_requests`, `accepted_connections_total`, `closed_connections_total`, `requests_started_total`, `responses_completed_total`, and `total_errors`.
+It MAY include current counters such as `active_requests`, `requests_started_total`, `responses_completed_total`, and `total_errors`.
 
 The load generator uses `/health` during connection warmup. The endpoint MUST be cheap and MUST NOT mutate request/response benchmark counters.
 
@@ -158,9 +158,6 @@ When `ACTIVITY_METRICS_PATH` is set, the server MUST write activity samples as J
 - `ts`
 - `elapsed_seconds`
 - `elapsed_ms` when available
-- `active_connections`, set to `null` unless connection tracking is explicitly enabled for every implementation
-- `accepted_connections_total`, set to `null` unless connection tracking is explicitly enabled for every implementation
-- `closed_connections_total`, set to `null` unless connection tracking is explicitly enabled for every implementation
 - `active_requests`
 - `requests_started_total`
 - `responses_completed_total`
@@ -223,7 +220,7 @@ This assessment reflects the code and checked-in benchmark artifacts present whe
 
 | Implementation | Contract status | Benchmark accuracy assessment |
 | --- | --- | --- |
-| `servers/node` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. Connection counters are intentionally `null` to avoid per-connection benchmark instrumentation overhead. | Benchmark artifacts were removed and should be regenerated. |
-| `servers/bun` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive responses, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. Connection counters are intentionally `null` to match the other implementations. | Benchmark artifacts were removed and should be regenerated. |
-| `servers/rust-hyper-tokio-st` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. Connection counters are intentionally `null` to match the other implementations. | Benchmark artifacts were removed and should be regenerated. |
-| `servers/rust-hyper-tokio-mt` | Appropriate multi-thread Rust variant. It has the same endpoint contract as `rust-hyper-tokio-st`, with Tokio's multi-thread runtime as the intentional runtime difference. Connection counters are intentionally `null` to match the other implementations. | Benchmark artifacts were removed and should be regenerated. |
+| `servers/node` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. | Benchmark artifacts were removed and should be regenerated. |
+| `servers/bun` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive responses, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. | Benchmark artifacts were removed and should be regenerated. |
+| `servers/rust-hyper-tokio-st` | Appropriate baseline. It supports the required endpoints, multi-port listening, keep-alive, safe integer ID validation, UTF-8 byte length, FNV-1a checksum, and activity/runtime metrics. | Benchmark artifacts were removed and should be regenerated. |
+| `servers/rust-hyper-tokio-mt` | Appropriate multi-thread Rust variant. It has the same endpoint contract as `rust-hyper-tokio-st`, with Tokio's multi-thread runtime as the intentional runtime difference. | Benchmark artifacts were removed and should be regenerated. |

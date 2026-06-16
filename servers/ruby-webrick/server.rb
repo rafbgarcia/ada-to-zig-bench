@@ -135,9 +135,6 @@ def mount_handlers(server, counters, events)
     snap = counters.snapshot
     write_json(res, 200, {
       ok: true,
-      active_connections: nil,
-      accepted_connections_total: nil,
-      closed_connections_total: nil,
       active_requests: snap[:active_requests],
       requests_started_total: snap[:requests_started_total],
       responses_completed_total: snap[:responses_completed_total],
@@ -218,10 +215,7 @@ end
 def activity_sample(counters)
   counters.snapshot.merge(
     ts: now_iso,
-    elapsed_seconds: elapsed_seconds,
-    active_connections: nil,
-    accepted_connections_total: nil,
-    closed_connections_total: nil
+    elapsed_seconds: elapsed_seconds
   )
 end
 

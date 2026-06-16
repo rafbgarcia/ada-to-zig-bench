@@ -155,7 +155,7 @@ fn handleRequest(request: *std.http.Server.Request, state: *State) !void {
     if (request.head.method == .GET and std.mem.eql(u8, path, "/health")) {
         var buffer: [512]u8 = undefined;
         const body = try std.fmt.bufPrint(&buffer,
-            "{{\"ok\":true,\"active_connections\":null,\"accepted_connections_total\":null,\"closed_connections_total\":null,\"active_requests\":{d},\"requests_started_total\":{d},\"responses_completed_total\":{d},\"total_errors\":{d}}}",
+            "{{\"ok\":true,\"active_requests\":{d},\"requests_started_total\":{d},\"responses_completed_total\":{d},\"total_errors\":{d}}}",
             .{
                 state.metrics.active_requests.load(.monotonic),
                 state.metrics.requests_started.load(.monotonic),
@@ -258,7 +258,7 @@ fn writeActivity(writer: *JsonlWriter, state: *State) void {
     var ts_buffer: [64]u8 = undefined;
     const ts = nowIso(&ts_buffer) catch "";
     const body = std.fmt.bufPrint(&buffer,
-        "{{\"ts\":\"{s}\",\"elapsed_seconds\":{d},\"active_connections\":null,\"accepted_connections_total\":null,\"closed_connections_total\":null,\"active_requests\":{d},\"requests_started_total\":{d},\"responses_completed_total\":{d},\"responses_2xx_total\":{d},\"responses_4xx_total\":{d},\"responses_5xx_total\":{d},\"request_errors_total\":{d}}}",
+        "{{\"ts\":\"{s}\",\"elapsed_seconds\":{d},\"active_requests\":{d},\"requests_started_total\":{d},\"responses_completed_total\":{d},\"responses_2xx_total\":{d},\"responses_4xx_total\":{d},\"responses_5xx_total\":{d},\"request_errors_total\":{d}}}",
         .{
             ts,
             elapsedSeconds(state),

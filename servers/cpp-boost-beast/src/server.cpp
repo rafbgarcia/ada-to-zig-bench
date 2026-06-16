@@ -125,9 +125,6 @@ json activity_sample(const Counters& counters) {
   return {
       {"ts", now_iso()},
       {"elapsed_seconds", elapsed_seconds()},
-      {"active_connections", nullptr},
-      {"accepted_connections_total", nullptr},
-      {"closed_connections_total", nullptr},
       {"active_requests", counters.active_requests.load(std::memory_order_relaxed)},
       {"requests_started_total", counters.requests_started.load(std::memory_order_relaxed)},
       {"responses_completed_total", counters.responses_completed.load(std::memory_order_relaxed)},
@@ -171,9 +168,6 @@ http::response<http::string_body> handle_request(State& state, const http::reque
     const Counters& c = state.counters;
     return json_response(http::status::ok,
                          {{"ok", true},
-                          {"active_connections", nullptr},
-                          {"accepted_connections_total", nullptr},
-                          {"closed_connections_total", nullptr},
                           {"active_requests", c.active_requests.load(std::memory_order_relaxed)},
                           {"requests_started_total", c.requests_started.load(std::memory_order_relaxed)},
                           {"responses_completed_total", c.responses_completed.load(std::memory_order_relaxed)},

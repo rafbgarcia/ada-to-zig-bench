@@ -31,20 +31,14 @@ SSH_CONNECT_TIMEOUT_SECONDS="${SSH_CONNECT_TIMEOUT_SECONDS:-5}"
 
 SERVER_NAME="${SERVER_NAME:-}"
 SERVER_NAMES="${SERVER_NAMES:-}"
-BENCHMARK_CONNECTIONS="${BENCHMARK_CONNECTIONS:-1000000}"
+CLIENT_CONNECTIONS="${CLIENT_CONNECTIONS:-8192}"
 PAYLOAD_BYTES="${PAYLOAD_BYTES:-256}"
 PAYLOAD_SWEEP_BYTES="${PAYLOAD_SWEEP_BYTES:-256 1024 4096 8192}"
-PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-5}"
+PAYLOAD_SWEEP_SECONDS="${PAYLOAD_SWEEP_SECONDS:-10}"
 REQUESTS_PER_SECOND="${REQUESTS_PER_SECOND:-100000}"
 WORK_MODE="${WORK_MODE:-open-loop}"
-TARGET_CONNECTION_RATE="${TARGET_CONNECTION_RATE:-50000}"
 CONNECTION_RETRIES="${CONNECTION_RETRIES:-3}"
 CONNECTION_RETRY_DELAY="${CONNECTION_RETRY_DELAY:-1s}"
-BASELINE_SECONDS="${BASELINE_SECONDS:-0}"
-SETTLE_SECONDS="${SETTLE_SECONDS:-0}"
-STABILIZE_SECONDS="${STABILIZE_SECONDS:-0}"
-TRAFFIC_SECONDS="${TRAFFIC_SECONDS:-10}"
-COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-0}"
 DEFAULT_REMOTE_PORTS="$(port_range_csv 8080 32)"
 REMOTE_PORTS="${REMOTE_PORTS:-$DEFAULT_REMOTE_PORTS}"
 SSH_USER="${SSH_USER:-}"
@@ -90,18 +84,15 @@ Environment:
   SSH_READY_TIMEOUT_SECONDS   default: 600
   SSH_CONNECT_TIMEOUT_SECONDS default: 5
   SERVER_NAMES                optional space-separated servers; auto-detected by default
-  BENCHMARK_CONNECTIONS       default: "1000000" connection target
+  CLIENT_CONNECTIONS          default: 8192 persistent load-generator clients
   PAYLOAD_BYTES               default: 256
-  PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 8192" post-ramp payload sizes
-  PAYLOAD_SWEEP_SECONDS       default: 5 per post-ramp payload size
-  REQUESTS_PER_SECOND         default: 100000 final request rate
+  PAYLOAD_SWEEP_BYTES         default: "256 1024 4096 8192" payload sizes
+  PAYLOAD_SWEEP_SECONDS       default: 10 per payload size
+  REQUESTS_PER_SECOND         default: 100000 request rate
   WORK_MODE                   default: open-loop; use fixed-work for same request count per stage
-  TARGET_CONNECTION_RATE      default: 50000
   CONNECTION_RETRIES          default: 3 failed connection dial/warmup retries
   CONNECTION_RETRY_DELAY      default: 1s between connection retries
   REMOTE_PORTS                default: 8080..8111 target ports for client ephemeral-port fanout
-  TRAFFIC_SECONDS             default: 10 request-rate ramp seconds
-  STABILIZE_SECONDS           default: 0 after traffic
   LATITUDE_KEEP_INFRA         set to 1 to keep bare metal hosts after the run
 EOF
 }
@@ -187,17 +178,14 @@ main() {
     mapfile -t SERVERS < <(find servers -mindepth 2 -maxdepth 2 -name bench.json -exec dirname {} \; | xargs -n 1 basename | sort)
   fi
 
-  read -r -a SCENARIO_CONNECTIONS <<<"$BENCHMARK_CONNECTIONS"
   (( ${#SERVERS[@]} > 0 )) || fail "no servers selected"
-  (( ${#SCENARIO_CONNECTIONS[@]} > 0 )) || fail "no benchmark scenarios selected"
 
   for server in "${SERVERS[@]}"; do
     [[ -f "servers/$server/bench.json" ]] || fail "unknown server: $server"
   done
 
-  for connections in "${SCENARIO_CONNECTIONS[@]}"; do
-    [[ "$connections" =~ ^[0-9]+$ ]] || fail "invalid connection count: $connections"
-  done
+  [[ "$CLIENT_CONNECTIONS" =~ ^[0-9]+$ ]] || fail "invalid client connection count: $CLIENT_CONNECTIONS"
+  (( CLIENT_CONNECTIONS > 0 )) || fail "CLIENT_CONNECTIONS must be greater than zero"
 
   MISSING_SERVERS=()
   for server in "${SERVERS[@]}"; do
@@ -243,8 +231,8 @@ main() {
   (( SSH_CONNECT_TIMEOUT_SECONDS > 0 )) || fail "SSH_CONNECT_TIMEOUT_SECONDS must be greater than zero"
 
   log "running missing servers: ${MISSING_SERVERS[*]}"
-  log "connection target(s): ${SCENARIO_CONNECTIONS[*]}; final request rate: ${REQUESTS_PER_SECOND}/s"
-  log "payload sweep: [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each after request-rate ramp"
+  log "request rate: ${REQUESTS_PER_SECOND}/s; client connections: $CLIENT_CONNECTIONS"
+  log "payload sweep: [$PAYLOAD_SWEEP_BYTES] for ${PAYLOAD_SWEEP_SECONDS}s each"
   log "server target ports: $REMOTE_PORTS"
 
   create_infrastructure
@@ -265,25 +253,18 @@ benchmark_complete() {
   [[ -f "$metadata" && -f "$summary" ]] || return 1
 
   jq -e \
-    --argjson expected "$(scenario_json)" \
+    --argjson expectedClientConnections "$CLIENT_CONNECTIONS" \
     --argjson expectedPayloadBytes "$PAYLOAD_BYTES" \
     --argjson expectedTargetRPS "$REQUESTS_PER_SECOND" \
     --argjson expectedSweep "$(payload_sweep_json)" \
     --argjson expectedSweepSeconds "$PAYLOAD_SWEEP_SECONDS" '
-    (.connection_targets // .scenarios // []) as $actual
-    | (($expected | max) // 0) as $maxExpected
-    | ($actual | type) == "array"
-    and (($actual | map(if type == "object" then .target_connections // .connections else . end) | sort) == ($expected | sort))
+    ((.client_connections // -1) == $expectedClientConnections)
     and ((.payload_bytes // -1) == $expectedPayloadBytes)
     and ((.target_requests_per_second // .target_messages_per_second // -1) == $expectedTargetRPS)
     and (((.payload_sweep_bytes // []) | sort) == ($expectedSweep | sort))
     and ((.payload_sweep_seconds // 0) == $expectedSweepSeconds)
-    and (((.complete // false) == true) or ((.success // false) == true) or ((.peak_active_connections // 0) >= $maxExpected))
+    and (((.complete // false) == true) or ((.success // false) == true))
   ' "$summary" >/dev/null 2>&1
-}
-
-scenario_json() {
-  printf '%s\n' "${SCENARIO_CONNECTIONS[@]}" | jq -cs 'map(tonumber)'
 }
 
 payload_sweep_json() {
@@ -292,11 +273,6 @@ payload_sweep_json() {
 
 payload_sweep_csv() {
   printf '%s\n' "$PAYLOAD_SWEEP_BYTES" | tr ', ' '\n' | awk 'NF' | paste -sd, -
-}
-
-connection_targets_csv() {
-  local IFS=,
-  printf '%s' "${SCENARIO_CONNECTIONS[*]}"
 }
 
 normalize_remote_ports() {
@@ -330,7 +306,7 @@ validate_remote_port_fanout() {
 
   IFS=',' read -r -a raw_ports <<<"$REMOTE_PORTS"
   remote_port_count="${#raw_ports[@]}"
-  max_connections="${SCENARIO_CONNECTIONS[$((${#SCENARIO_CONNECTIONS[@]} - 1))]}"
+  max_connections="$CLIENT_CONNECTIONS"
   recommended_capacity=$((remote_port_count * 32000))
 
   if (( max_connections > recommended_capacity )); then
@@ -340,7 +316,7 @@ validate_remote_port_fanout() {
 
 required_nofile() {
   local max_connections minimum
-  max_connections="${SCENARIO_CONNECTIONS[$((${#SCENARIO_CONNECTIONS[@]} - 1))]}"
+  max_connections="$CLIENT_CONNECTIONS"
   minimum=2097152
   if (( max_connections + 65536 > minimum )); then
     printf '%s\n' "$((max_connections + 65536))"
@@ -983,29 +959,20 @@ fetch_server_artifacts() {
 }
 
 run_loadgen() {
-  local connection_targets="${SCENARIO_CONNECTIONS[*]}"
-  local remote_connection_targets
   local bench_nofile
-  remote_connection_targets="$(connection_targets_csv)"
   bench_nofile="$(required_nofile)"
-  log "running connection load from loadgen host: $connection_targets"
+  log "running load from loadgen host: ${REQUESTS_PER_SECOND}/s across $CLIENT_CONNECTIONS client connections"
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
     BENCH_NOFILE="$bench_nofile" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
-    CONNECTION_TARGETS="$remote_connection_targets" \
+    CLIENT_CONNECTIONS="$CLIENT_CONNECTIONS" \
     REQUESTS_PER_SECOND="$REQUESTS_PER_SECOND" \
     WORK_MODE="$WORK_MODE" \
-    TARGET_CONNECTION_RATE="$TARGET_CONNECTION_RATE" \
     CONNECTION_RETRIES="$CONNECTION_RETRIES" \
     CONNECTION_RETRY_DELAY="$CONNECTION_RETRY_DELAY" \
     PAYLOAD_BYTES="$PAYLOAD_BYTES" \
     PAYLOAD_SWEEP_BYTES="$(payload_sweep_csv)" \
     PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
-    BASELINE_SECONDS="$BASELINE_SECONDS" \
-    SETTLE_SECONDS="$SETTLE_SECONDS" \
-    STABILIZE_SECONDS="$STABILIZE_SECONDS" \
-    TRAFFIC_SECONDS="$TRAFFIC_SECONDS" \
-    COOLDOWN_SECONDS="$COOLDOWN_SECONDS" \
     PORTS="$REMOTE_PORTS" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
@@ -1025,20 +992,14 @@ for port in "${ports[@]}"; do
 done
 /opt/bench/.tmp/loadgen-bin \
   --urls "$URLS" \
-  --connection-targets "$CONNECTION_TARGETS" \
+  --client-connections "$CLIENT_CONNECTIONS" \
   --payload-bytes "$PAYLOAD_BYTES" \
   --payload-sweep-bytes "$PAYLOAD_SWEEP_BYTES" \
   --payload-sweep-seconds "$PAYLOAD_SWEEP_SECONDS" \
   --requests-per-second "$REQUESTS_PER_SECOND" \
   --work-mode "$WORK_MODE" \
-  --target-connection-rate "$TARGET_CONNECTION_RATE" \
   --connection-retries "$CONNECTION_RETRIES" \
   --connection-retry-delay "$CONNECTION_RETRY_DELAY" \
-  --baseline-seconds "$BASELINE_SECONDS" \
-  --settle-seconds "$SETTLE_SECONDS" \
-  --stabilize-seconds "$STABILIZE_SECONDS" \
-  --traffic-seconds "$TRAFFIC_SECONDS" \
-  --cooldown-seconds "$COOLDOWN_SECONDS" \
   --output "$OUT" > "$OUT/loadgen.log" 2>&1
 REMOTE
 }
@@ -1067,7 +1028,6 @@ write_suite_metadata() {
   LATITUDE_SERVER_PLAN="$LATITUDE_SERVER_PLAN" \
   LATITUDE_LOADGEN_PLAN="$LATITUDE_LOADGEN_PLAN" \
   REMOTE_PORTS="$REMOTE_PORTS" \
-  CONNECTION_TARGETS="${SCENARIO_CONNECTIONS[*]}" \
   PAYLOAD_SWEEP_BYTES="$PAYLOAD_SWEEP_BYTES" \
   PAYLOAD_SWEEP_SECONDS="$PAYLOAD_SWEEP_SECONDS" \
   node <<'NODE'
@@ -1078,7 +1038,6 @@ const suiteDir = process.env.SUITE_DIR;
 const serverName = process.env.SERVER_NAME;
 const manifest = JSON.parse(fs.readFileSync(path.join('servers', serverName, 'bench.json'), 'utf8'));
 const summary = JSON.parse(fs.readFileSync(path.join(suiteDir, 'summary.json'), 'utf8'));
-const connectionTargets = process.env.CONNECTION_TARGETS.split(/\s+/).filter(Boolean).map(Number);
 
 const ports = process.env.REMOTE_PORTS.split(',').map((port) => port.trim()).filter(Boolean);
 const urls = ports.map((port) => `http://${process.env.SERVER_PUBLIC_IP}:${port}/json`);
@@ -1094,32 +1053,25 @@ const metadata = {
   server_command: manifest.run || '',
   url: urls[0],
   urls,
-  connections: summary.connections ?? Math.max(...connectionTargets),
-  connection_targets: summary.connection_targets ?? connectionTargets,
+  client_connections: summary.client_connections ?? null,
   payload_bytes: summary.payload_bytes ?? null,
   payload_sweep_bytes: summary.payload_sweep_bytes ?? process.env.PAYLOAD_SWEEP_BYTES.split(/[\s,]+/).filter(Boolean).map(Number),
   payload_sweep_seconds: summary.payload_sweep_seconds ?? Number(process.env.PAYLOAD_SWEEP_SECONDS),
   work_mode: summary.work_mode ?? process.env.WORK_MODE ?? 'open-loop',
   target_requests_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
   target_messages_per_second: summary.target_requests_per_second ?? summary.target_messages_per_second ?? null,
-  target_connection_rate: summary.target_connection_rate ?? null,
   connection_retries: summary.connection_retries ?? null,
   connection_retry_delay_ms: summary.connection_retry_delay_ms ?? null,
-  baseline_seconds: summary.baseline_seconds ?? null,
-  settle_seconds: summary.settle_seconds ?? null,
-  stabilize_seconds: summary.stabilize_seconds ?? null,
-  traffic_seconds: summary.traffic_seconds ?? null,
-  cooldown_seconds: summary.cooldown_seconds ?? null,
   started_at: process.env.STARTED_AT,
   git_commit: process.env.GIT_COMMIT,
   benchmark_recommendations: {
     topology: 'dedicated Latitude server host plus dedicated Latitude loadgen host in the same site',
     request_shape: 'HTTP/1.1 keep-alive POST /json with JSON parse, validation, checksum, and JSON response serialization',
-    primary_metrics: ['active_connections', 'requests_started_per_second', 'responses_completed_per_second', 'rss_mb', 'cpu_percent', 'threads', 'open_fds'],
+    primary_metrics: ['requests_started_per_second', 'responses_completed_per_second', 'rss_mb', 'cpu_percent', 'threads', 'open_fds'],
     notes: [
       'Load generation is isolated from the measured server host.',
-      'Connections are distributed over multiple server ports to avoid client ephemeral-port exhaustion at 1M connections.',
-      'Connection targets are cumulative inside one continuous run so resource growth can be correlated with server activity.',
+      'Target payload sizes run at a fixed request rate for the configured duration.',
+      'Multiple server ports are available for client fanout when the configured client pool is large.',
     ],
   },
   infrastructure: {
@@ -1137,7 +1089,6 @@ const enrichedSummary = {
   server: serverName,
   suite: metadata.suite,
   started_at: summary.started_at ?? process.env.STARTED_AT,
-  connection_targets: summary.connection_targets ?? connectionTargets,
 };
 
 fs.writeFileSync(path.join(suiteDir, 'metadata.json'), `${JSON.stringify(metadata, null, 2)}\n`);

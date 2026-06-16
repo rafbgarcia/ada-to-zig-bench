@@ -1,14 +1,5 @@
 export const metricGroups = [
   {
-    id: 'connections',
-    title: 'Active Connections',
-    description: 'Active connections reported by the measured server process.',
-    unit: '',
-    series: [
-      { key: 'serverConnections', label: 'Active connections', color: '#0f766e' },
-    ],
-  },
-  {
     id: 'work',
     title: 'Request Throughput',
     description: 'Client-observed schedule, dispatch, and completion rates derived from cumulative load-generator counters.',
@@ -67,17 +58,6 @@ export const metricGroups = [
       { key: 'threads', label: 'Threads', color: '#7c3aed' },
     ],
   },
-  // {
-  //   id: 'efficiency',
-  //   title: 'Resource Efficiency',
-  //   description: 'Derived resource cost normalized by live connection and request volume.',
-  //   unit: '',
-  //   series: [
-  //     { key: 'rssMbPer10kConnections', label: 'RSS / 10k conns', color: '#0891b2', unit: 'MB' },
-  //     { key: 'fdsPerConnection', label: 'FDs / conn', color: '#334155' },
-  //     { key: 'cpuPercentPer10kRps', label: 'CPU% / 10k RPS', color: '#b42318', unit: '%' },
-  //   ],
-  // },
   {
     id: 'runtime',
     title: 'Runtime Memory',
@@ -104,26 +84,14 @@ export const metricGroups = [
 ];
 
 export const phaseColors = {
-  baseline: '#64748b',
-  ramp: '#2563eb',
-  settle: '#16a34a',
-  traffic: '#f97316',
-  stabilize: '#7c3aed',
-  ramp_failed: '#dc2626',
+  setup: '#64748b',
   payload_sweep: '#0d9488',
-  cooldown: '#94a3b8',
   unknown: '#cbd5e1',
 };
 
 export const phaseLabels = {
-  baseline: 'Baseline',
-  ramp: 'Ramp',
-  settle: 'Settle',
-  traffic: 'Traffic',
-  stabilize: 'Stabilize',
-  ramp_failed: 'Ramp failed',
+  setup: 'Setup',
   payload_sweep: 'Payload sweep',
-  cooldown: 'Cooldown',
   unknown: 'Unknown',
 };
 
@@ -270,9 +238,6 @@ function withDerivedLoadgenRates(samples) {
       received_per_second: derivedRate(sample, previous, 'received', deltaSeconds, sample.received_per_second),
       errors_per_second: derivedRate(sample, previous, 'errors', deltaSeconds, sample.errors_per_second),
       dispatch_misses_per_second: derivedRate(sample, previous, 'dispatch_misses', deltaSeconds, sample.dispatch_misses_per_second),
-      connection_attempts_per_second: derivedRate(sample, previous, 'connection_attempts', deltaSeconds, sample.connection_attempts_per_second),
-      connection_retries_per_second: derivedRate(sample, previous, 'connection_retries', deltaSeconds, sample.connection_retries_per_second),
-      connection_failures_per_second: derivedRate(sample, previous, 'connection_failures', deltaSeconds, sample.connection_failures_per_second),
     };
     previous = sample;
     return next;
@@ -295,7 +260,7 @@ function dedupeSamplesByTime(samples) {
 function mergeDuplicateSample(previous, sample) {
   const merged = { ...previous, ...sample };
   for (const [key, value] of Object.entries(previous)) {
-    if (!key.endsWith('_total') && !['scheduled', 'dispatched', 'sent', 'received', 'errors', 'dispatch_misses', 'connection_attempts', 'connection_retries', 'connection_failures'].includes(key)) {
+    if (!key.endsWith('_total') && !['scheduled', 'dispatched', 'sent', 'received', 'errors', 'dispatch_misses'].includes(key)) {
       continue;
     }
     const left = Number(value);
@@ -354,13 +319,10 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
     runtime = runtimeBySecond.get(second) ?? runtime;
     rows.push({
       second,
-      phase: loadgen.phase ?? 'idle',
+      phase: loadgen.phase ?? 'setup',
       stageIndex: numberValue(loadgen.stage_index, -1),
-      targetConnections: nullableNumber(loadgen.target_connections),
       targetRequestsPerSecond: nullableNumber(loadgen.target_requests_per_second),
       payloadBytes: nullableNumber(loadgen.payload_bytes),
-      loadgenConnections: nullableNumber(loadgen.active_connections),
-      serverConnections: nullableNumber(activity.active_connections ?? server.tcp_established),
       activeRequests: numberValue(activity.active_requests),
       loadgenInFlight: numberValue(loadgen.in_flight, Math.max(0, numberValue(loadgen.sent) - numberValue(loadgen.received) - numberValue(loadgen.errors))),
       serverRequestsPerSecond: numberValue(activity.requests_started_per_second),
@@ -373,9 +335,6 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       dispatchMissesPerSecond: numberValue(loadgen.dispatch_misses_per_second),
       loadgenScheduledPerSecond: numberValue(loadgen.scheduled_per_second, numberValue(loadgen.target_requests_per_second)),
       loadgenDispatchedPerSecond: numberValue(loadgen.dispatched_per_second, numberValue(loadgen.sent_per_second)),
-      connectionAttemptsPerSecond: numberValue(loadgen.connection_attempts_per_second),
-      connectionRetriesPerSecond: numberValue(loadgen.connection_retries_per_second),
-      connectionFailuresPerSecond: numberValue(loadgen.connection_failures_per_second),
       loadgenSentPerSecond: numberValue(loadgen.sent_per_second),
       loadgenReceivedPerSecond: numberValue(loadgen.received_per_second),
       p50LatencyMs: numberValue(loadgen.p50_latency_ms),
@@ -397,10 +356,7 @@ function buildTimeline({ serverMetrics, activityMetrics, loadgenMetrics, runtime
       heapTotalMb: numberValue(runtime.heap_total_mb),
     });
     const row = rows[rows.length - 1];
-    const normalizedConnections = row.serverConnections || row.tcpEstablished || row.loadgenConnections || 0;
     const successfulRps = row.responses2xxPerSecond || row.serverResponsesPerSecond || row.loadgenReceivedPerSecond || 0;
-    row.rssMbPer10kConnections = normalizedConnections > 0 ? row.rssMb / (normalizedConnections / 10000) : null;
-    row.fdsPerConnection = normalizedConnections > 0 && row.openFds != null ? row.openFds / normalizedConnections : null;
     row.cpuPercentPer10kRps = successfulRps > 0 ? row.cpuPercent / (successfulRps / 10000) : null;
   }
 
@@ -468,16 +424,14 @@ function buildPhaseRanges(samples, maxElapsed) {
   const ranges = [];
   for (const sample of samples) {
     const name = sample.phase ?? 'unknown';
-    const targetConnections = sample.target_connections ?? null;
     const stageIndex = sample.stage_index ?? -1;
     const elapsed = sample.timeline_seconds ?? sample.elapsed_seconds ?? 0;
     const last = ranges[ranges.length - 1];
 
     if (!last || last.name !== name || last.stageIndex !== stageIndex) {
-      ranges.push({ name, stageIndex, targetConnections, start: elapsed, end: elapsed });
+      ranges.push({ name, stageIndex, start: elapsed, end: elapsed });
     } else {
       last.end = elapsed;
-      last.targetConnections = targetConnections ?? last.targetConnections;
     }
   }
 

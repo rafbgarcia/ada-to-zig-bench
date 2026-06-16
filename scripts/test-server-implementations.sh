@@ -128,27 +128,21 @@ run_server_test() {
 
   "$LOADGEN_BIN" \
     --urls "$urls" \
-    --connection-targets 8 \
+    --client-connections 8 \
     --payload-bytes 128 \
     --payload-sweep-bytes "0 512" \
     --payload-sweep-seconds 1 \
     --requests-per-second 20 \
     --work-mode fixed-work \
-    --target-connection-rate 100 \
     --connection-retries 1 \
     --connection-retry-delay 100ms \
-    --baseline-seconds 0 \
-    --settle-seconds 0 \
-    --stabilize-seconds 0 \
-    --traffic-seconds 1 \
-    --cooldown-seconds 0 \
     --output "$run_dir/loadgen" > "$run_dir/loadgen.log" 2>&1
 
   node - "$run_dir/loadgen/summary.json" "$server" <<'NODE'
 const fs = require('node:fs');
 const [summaryPath, server] = process.argv.slice(2);
 const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-if (!summary.success) throw new Error(`${server}: loadgen did not reach the connection target`);
+if (!summary.success || !summary.complete) throw new Error(`${server}: loadgen did not complete`);
 if (summary.total_errors !== 0) throw new Error(`${server}: loadgen reported ${summary.total_errors} error(s)`);
 if (summary.total_dispatch_misses !== 0) throw new Error(`${server}: loadgen reported ${summary.total_dispatch_misses} dispatch miss(es)`);
 if (summary.total_received !== summary.total_sent) throw new Error(`${server}: received ${summary.total_received} responses for ${summary.total_sent} requests`);

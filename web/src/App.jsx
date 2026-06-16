@@ -267,24 +267,6 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups })
           </div>
         </div>
         {status ? <RunStatusBadge status={status} /> : null}
-        {/* <dl className="column-meta">
-          <div>
-            <dt>Target RPS</dt>
-            <dd>{meta.target_requests_per_second ? formatRate(meta.target_requests_per_second) : '--'}</dd>
-          </div>
-          <div>
-            <dt>Connections</dt>
-            <dd>{formatTargets(meta.connection_targets)}</dd>
-          </div>
-          <div>
-            <dt>Payload</dt>
-            <dd>{meta.payload_bytes ? `${formatNumber(meta.payload_bytes)} B` : '--'}</dd>
-          </div>
-          <div>
-            <dt>Started</dt>
-            <dd>{meta.started_at ? formatRunDate(meta.started_at) : '--'}</dd>
-          </div>
-        </dl> */}
       </header>
 
       <div className="column-body">
@@ -294,7 +276,7 @@ function BenchColumn({ run, index = 0, accent, loaded, loading, error, groups })
           <div className="column-state"><Loader2 size={16} className="spin" /> Loading run…</div>
         ) : (
           <>
-            {status?.kind === 'failed' || status?.kind === 'target-miss' ? <RunFailureSummary loaded={loaded} status={status} /> : null}
+            {status?.kind === 'failed' || status?.kind === 'warning' ? <RunFailureSummary loaded={loaded} status={status} /> : null}
             <div className="column-charts">
               {groups.map((group) => (
                 <MetricChart
@@ -318,12 +300,9 @@ function RunStatusBadge({ status }) {
 
 function RunFailureSummary({ loaded, status }) {
   const summary = loaded.summary ?? {};
-  const failedStage = (summary.stages ?? []).find((stage) => stage.ramp_reached_target === false || stage.phase === 'ramp_failed');
   const details = [
-    failedStage?.failure_reason,
-    summary.peak_active_connections != null && summary.connections != null
-      ? `${formatCompact(summary.peak_active_connections)} / ${formatCompact(summary.connections)} connections`
-      : null,
+    summary.total_errors ? `${formatCompact(summary.total_errors)} errors` : null,
+    summary.total_dispatch_misses ? `${formatCompact(summary.total_dispatch_misses)} missed slots` : null,
     summary.total_connection_retries ? `${formatCompact(summary.total_connection_retries)} retries` : null,
     summary.total_connection_failures ? `${formatCompact(summary.total_connection_failures)} failed slots` : null,
   ].filter(Boolean);
@@ -339,10 +318,11 @@ function RunFailureSummary({ loaded, status }) {
 function runStatus(loaded) {
   if (!loaded?.summary) return null;
   const summary = loaded.summary;
-  if (summary.success === true) return { kind: 'success', label: 'Complete' };
-  const failedStage = (summary.stages ?? []).find((stage) => stage.ramp_reached_target === false || stage.phase === 'ramp_failed');
-  if (failedStage || (summary.peak_active_connections ?? 0) < (summary.connections ?? 0)) {
-    return { kind: 'target-miss', label: 'Target miss' };
+  if (summary.success === true || summary.complete === true) {
+    if ((summary.total_errors ?? 0) > 0 || (summary.total_connection_failures ?? 0) > 0 || (summary.total_dispatch_misses ?? 0) > 0) {
+      return { kind: 'warning', label: 'Warnings' };
+    }
+    return { kind: 'success', label: 'Complete' };
   }
   if (summary.complete === false) return { kind: 'failed', label: 'Incomplete' };
   return { kind: 'failed', label: 'Failed' };
@@ -502,7 +482,7 @@ function ChartTooltip({ active, payload, label, group }) {
     <div className="chart-tooltip">
       <div className="tooltip-title">
         <strong>{Math.round(Number(label) || 0)}s</strong>
-        <span>{row?.phase ?? 'idle'}</span>
+        <span>{row?.phase ?? 'setup'}</span>
       </div>
       {payload.map((item) => {
         const series = group.series.find((entry) => entry.key === item.dataKey);
@@ -515,9 +495,4 @@ function ChartTooltip({ active, payload, label, group }) {
       })}
     </div>
   );
-}
-
-function formatTargets(values) {
-  if (!Array.isArray(values) || values.length === 0) return '--';
-  return values.map((value) => formatCompact(value)).join(' → ');
 }

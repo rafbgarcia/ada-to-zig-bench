@@ -205,9 +205,6 @@ public final class Server {
     private static Map<String, Object> healthSample(Counters counters) {
         Map<String, Object> sample = new LinkedHashMap<>();
         sample.put("ok", true);
-        sample.put("active_connections", null);
-        sample.put("accepted_connections_total", null);
-        sample.put("closed_connections_total", null);
         sample.put("active_requests", counters.activeRequests.get());
         sample.put("requests_started_total", counters.requestsStarted.get());
         sample.put("responses_completed_total", counters.responsesCompleted.get());
@@ -219,9 +216,6 @@ public final class Server {
         Map<String, Object> sample = new LinkedHashMap<>();
         sample.put("ts", nowIso());
         sample.put("elapsed_seconds", elapsedSeconds());
-        sample.put("active_connections", null);
-        sample.put("accepted_connections_total", null);
-        sample.put("closed_connections_total", null);
         sample.put("active_requests", counters.activeRequests.get());
         sample.put("requests_started_total", counters.requestsStarted.get());
         sample.put("responses_completed_total", counters.responsesCompleted.get());

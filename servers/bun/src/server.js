@@ -120,9 +120,6 @@ function activitySample() {
   return {
     ts: new Date().toISOString(),
     elapsed_seconds: elapsedSeconds(),
-    active_connections: null,
-    accepted_connections_total: null,
-    closed_connections_total: null,
     active_requests: activeRequests,
     requests_started_total: requestsStarted,
     responses_completed_total: responsesCompleted,

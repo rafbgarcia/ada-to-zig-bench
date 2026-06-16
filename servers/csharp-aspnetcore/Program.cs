@@ -30,9 +30,6 @@ var app = builder.Build();
 app.MapGet("/health", () => JsonResponse(new Dictionary<string, object?>
 {
     ["ok"] = true,
-    ["active_connections"] = null,
-    ["accepted_connections_total"] = null,
-    ["closed_connections_total"] = null,
     ["active_requests"] = Interlocked.Read(ref counters.ActiveRequests),
     ["requests_started_total"] = Interlocked.Read(ref counters.RequestsStarted),
     ["responses_completed_total"] = Interlocked.Read(ref counters.ResponsesCompleted),
@@ -145,9 +142,6 @@ static Dictionary<string, object?> ActivitySample(Counters counters, Stopwatch s
 {
     ["ts"] = DateTimeOffset.UtcNow.ToString("O"),
     ["elapsed_seconds"] = (long)started.Elapsed.TotalSeconds,
-    ["active_connections"] = null,
-    ["accepted_connections_total"] = null,
-    ["closed_connections_total"] = null,
     ["active_requests"] = Interlocked.Read(ref counters.ActiveRequests),
     ["requests_started_total"] = Interlocked.Read(ref counters.RequestsStarted),
     ["responses_completed_total"] = Interlocked.Read(ref counters.ResponsesCompleted),

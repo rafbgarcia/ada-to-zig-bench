@@ -109,14 +109,11 @@ func main() {
 
 func (s *serverState) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                         true,
-		"active_connections":         nil,
-		"accepted_connections_total": nil,
-		"closed_connections_total":   nil,
-		"active_requests":            s.counters.activeRequests.Load(),
-		"requests_started_total":     s.counters.requestsStarted.Load(),
-		"responses_completed_total":  s.counters.responsesCompleted.Load(),
-		"total_errors":               s.counters.requestErrors.Load(),
+		"ok":                        true,
+		"active_requests":           s.counters.activeRequests.Load(),
+		"requests_started_total":    s.counters.requestsStarted.Load(),
+		"responses_completed_total": s.counters.responsesCompleted.Load(),
+		"total_errors":              s.counters.requestErrors.Load(),
 	})
 }
 
@@ -216,18 +213,15 @@ func checksum(payload []byte) uint32 {
 
 func activitySample(c *counters) map[string]any {
 	return map[string]any{
-		"ts":                         time.Now().UTC().Format(time.RFC3339),
-		"elapsed_seconds":            elapsedSeconds(),
-		"active_connections":         nil,
-		"accepted_connections_total": nil,
-		"closed_connections_total":   nil,
-		"active_requests":            c.activeRequests.Load(),
-		"requests_started_total":     c.requestsStarted.Load(),
-		"responses_completed_total":  c.responsesCompleted.Load(),
-		"responses_2xx_total":        c.responses2xx.Load(),
-		"responses_4xx_total":        c.responses4xx.Load(),
-		"responses_5xx_total":        c.responses5xx.Load(),
-		"request_errors_total":       c.requestErrors.Load(),
+		"ts":                        time.Now().UTC().Format(time.RFC3339),
+		"elapsed_seconds":           elapsedSeconds(),
+		"active_requests":           c.activeRequests.Load(),
+		"requests_started_total":    c.requestsStarted.Load(),
+		"responses_completed_total": c.responsesCompleted.Load(),
+		"responses_2xx_total":       c.responses2xx.Load(),
+		"responses_4xx_total":       c.responses4xx.Load(),
+		"responses_5xx_total":       c.responses5xx.Load(),
+		"request_errors_total":      c.requestErrors.Load(),
 	}
 }
 

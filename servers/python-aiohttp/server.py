@@ -116,9 +116,6 @@ async def health(request):
     counters = request.app["counters"]
     return json_response({
         "ok": True,
-        "active_connections": None,
-        "accepted_connections_total": None,
-        "closed_connections_total": None,
         "active_requests": counters.active_requests,
         "requests_started_total": counters.requests_started,
         "responses_completed_total": counters.responses_completed,
@@ -200,9 +197,6 @@ def activity_sample(counters):
     return {
         "ts": now_iso(),
         "elapsed_seconds": elapsed_seconds(),
-        "active_connections": None,
-        "accepted_connections_total": None,
-        "closed_connections_total": None,
         "active_requests": counters.active_requests,
         "requests_started_total": counters.requests_started,
         "responses_completed_total": counters.responses_completed,

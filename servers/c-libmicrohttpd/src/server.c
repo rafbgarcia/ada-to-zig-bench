@@ -185,7 +185,7 @@ static enum MHD_Result handle_request(void *cls, struct MHD_Connection *connecti
   if (strcmp(url, "/health") == 0 && strcmp(method, "GET") == 0) {
     char body[512];
     snprintf(body, sizeof(body),
-             "{\"ok\":true,\"active_connections\":null,\"accepted_connections_total\":null,\"closed_connections_total\":null,\"active_requests\":%" PRIu64 ",\"requests_started_total\":%" PRIu64 ",\"responses_completed_total\":%" PRIu64 ",\"total_errors\":%" PRIu64 "}",
+             "{\"ok\":true,\"active_requests\":%" PRIu64 ",\"requests_started_total\":%" PRIu64 ",\"responses_completed_total\":%" PRIu64 ",\"total_errors\":%" PRIu64 "}",
              state->counters.active_requests, state->counters.requests_started,
              state->counters.responses_completed, state->counters.request_errors);
     return send_json(connection, 200, body);
@@ -378,7 +378,7 @@ static void write_activity(struct app_state *state) {
   char line[768];
   now_iso(ts, sizeof(ts));
   snprintf(line, sizeof(line),
-           "{\"ts\":\"%s\",\"elapsed_seconds\":%lld,\"active_connections\":null,\"accepted_connections_total\":null,\"closed_connections_total\":null,\"active_requests\":%" PRIu64 ",\"requests_started_total\":%" PRIu64 ",\"responses_completed_total\":%" PRIu64 ",\"responses_2xx_total\":%" PRIu64 ",\"responses_4xx_total\":%" PRIu64 ",\"responses_5xx_total\":%" PRIu64 ",\"request_errors_total\":%" PRIu64 "}",
+           "{\"ts\":\"%s\",\"elapsed_seconds\":%lld,\"active_requests\":%" PRIu64 ",\"requests_started_total\":%" PRIu64 ",\"responses_completed_total\":%" PRIu64 ",\"responses_2xx_total\":%" PRIu64 ",\"responses_4xx_total\":%" PRIu64 ",\"responses_5xx_total\":%" PRIu64 ",\"request_errors_total\":%" PRIu64 "}",
            ts, elapsed_seconds(state), state->counters.active_requests, state->counters.requests_started,
            state->counters.responses_completed, state->counters.responses_2xx, state->counters.responses_4xx,
            state->counters.responses_5xx, state->counters.request_errors);
