@@ -295,7 +295,10 @@ fn writeEvent(writer: *JsonlWriter, state: *State, reason: []const u8, status: u
 }
 
 fn nowIso(buffer: []u8) ![]const u8 {
-    const seconds = std.time.timestamp();
+    return timestampIso(buffer, std.time.timestamp());
+}
+
+fn timestampIso(buffer: []u8, seconds: i64) ![]const u8 {
     const epoch = std.time.epoch.EpochSeconds{ .secs = @intCast(seconds) };
     const day = epoch.getEpochDay();
     const year_day = day.calculateYearDay();
@@ -303,7 +306,7 @@ fn nowIso(buffer: []u8) ![]const u8 {
     const day_seconds = epoch.getDaySeconds();
     return std.fmt.bufPrint(buffer, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
         year_day.year,
-        @intFromEnum(month_day.month) + 1,
+        month_day.month.numeric(),
         month_day.day_index + 1,
         day_seconds.getHoursIntoDay(),
         day_seconds.getMinutesIntoHour(),
@@ -335,4 +338,12 @@ fn parsePorts(allocator: std.mem.Allocator, value: []const u8) ![]u16 {
 
 fn handleSignal(_: c_int) callconv(.c) void {
     stopping.store(true, .monotonic);
+}
+
+test "timestampIso formats UTC timestamps" {
+    var buffer: [64]u8 = undefined;
+
+    try std.testing.expectEqualStrings("1970-01-01T00:00:00Z", try timestampIso(&buffer, 0));
+    try std.testing.expectEqualStrings("2021-06-05T20:28:26Z", try timestampIso(&buffer, 1622924906));
+    try std.testing.expectEqualStrings("2021-07-01T17:11:13Z", try timestampIso(&buffer, 1625159473));
 }
