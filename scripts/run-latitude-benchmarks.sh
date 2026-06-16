@@ -914,15 +914,26 @@ run_server_suite() {
   local started_at
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+  if ! wait_for_loadgen_server_health "$server"; then
+    fetch_server_artifacts "$local_work_dir"
+    remote_server_stop
+    fetch_server_artifacts "$local_work_dir"
+    rm -rf "servers/$server/benchmark"
+    mv "$local_work_dir" "servers/$server/benchmark"
+    print_suite_failure_details "$server" "servers/$server/benchmark"
+    fail "server health check failed from loadgen host for $server; artifacts were preserved"
+  fi
+
   local status=0
   set +e
   run_loadgen
   status=$?
   set -e
 
-  remote_server_stop
   local artifact_status=0
   fetch_loadgen_artifacts "$local_work_dir" || artifact_status=$?
+  fetch_server_artifacts "$local_work_dir"
+  remote_server_stop
   fetch_server_artifacts "$local_work_dir"
   if [[ -f "$local_work_dir/summary.json" ]]; then
     write_suite_metadata "$server" "$started_at" "$local_work_dir"
@@ -1048,6 +1059,44 @@ echo "$!" > /opt/bench/.tmp/cloud-server/collector.pid
 REMOTE
   printf '{"provider":"latitude.sh","server_public_ip":"%s","loadgen_public_ip":"%s","site":"%s","server_plan":"%s","loadgen_plan":"%s"}\n' \
     "$SERVER_IPV4" "$LOADGEN_IPV4" "$LATITUDE_SITE" "$LATITUDE_SERVER_PLAN" "$LATITUDE_LOADGEN_PLAN" > "$local_work_dir/infrastructure.json"
+}
+
+wait_for_loadgen_server_health() {
+  local server="$1"
+  log "checking loadgen host can reach $server health endpoints"
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
+    SERVER_PUBLIC_IP="$SERVER_IPV4" \
+    PORTS="$REMOTE_PORTS" \
+    'bash -s' <<'REMOTE'
+set -euo pipefail
+IFS=',' read -r -a ports <<<"$PORTS"
+deadline=$((SECONDS + 30))
+
+while (( SECONDS < deadline )); do
+  failed=0
+  for port in "${ports[@]}"; do
+    port="${port//[[:space:]]/}"
+    [[ -n "$port" ]] || continue
+    if ! curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/health" >/dev/null 2>&1; then
+      failed=1
+      break
+    fi
+  done
+  if (( failed == 0 )); then
+    exit 0
+  fi
+  sleep 1
+done
+
+for port in "${ports[@]}"; do
+  port="${port//[[:space:]]/}"
+  [[ -n "$port" ]] || continue
+  if ! curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/health" >/dev/null; then
+    printf 'loadgen host cannot reach http://%s:%s/health\n' "$SERVER_PUBLIC_IP" "$port" >&2
+  fi
+done
+exit 1
+REMOTE
 }
 
 remote_server_stop() {

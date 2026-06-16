@@ -37,7 +37,16 @@ defmodule BenchElixirPlug.Application do
         {Plug.Cowboy,
          scheme: :http,
          plug: BenchElixirPlug.Router,
-         options: [ip: ip, port: port, protocol_options: [idle_timeout: 120_000]],
+         options: [
+           ip: ip,
+           port: port,
+           transport_options: [
+             num_acceptors: 256,
+             max_connections: :infinity,
+             socket_opts: [backlog: 65_535, nodelay: true, reuseaddr: true]
+           ],
+           protocol_options: [idle_timeout: 120_000, max_keepalive: 1_000_000]
+         ],
          ref: ref},
         id: ref
       )
