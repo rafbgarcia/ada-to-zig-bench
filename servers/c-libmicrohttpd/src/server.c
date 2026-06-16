@@ -18,6 +18,7 @@
 
 #define MAX_SAFE_INTEGER 9007199254740991ULL
 #define MAX_BODY_BYTES (1024U * 1024U)
+#define BENCH_MHD_THREAD_POOL_SIZE 32U
 
 struct counters {
   volatile uint64_t active_requests;
@@ -100,6 +101,13 @@ int main(void) {
     return 1;
   }
 
+  unsigned int mhd_flags = MHD_USE_INTERNAL_POLLING_THREAD;
+  if (MHD_is_feature_supported(MHD_FEATURE_EPOLL) == MHD_YES) {
+    mhd_flags |= MHD_USE_EPOLL;
+  } else if (MHD_is_feature_supported(MHD_FEATURE_POLL) == MHD_YES) {
+    mhd_flags |= MHD_USE_POLL;
+  }
+
   for (size_t i = 0; i < port_count; i++) {
     struct sockaddr_in bind_address;
     union MHD_DaemonInfo const *info = NULL;
@@ -111,9 +119,10 @@ int main(void) {
       stopping = 1;
       break;
     }
-    daemons[i] = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_THREAD_PER_CONNECTION,
+    daemons[i] = MHD_start_daemon(mhd_flags,
                                   ports[i], NULL, NULL, handle_request, &state,
                                   MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&bind_address,
+                                  MHD_OPTION_THREAD_POOL_SIZE, BENCH_MHD_THREAD_POOL_SIZE,
                                   MHD_OPTION_NOTIFY_COMPLETED, request_completed, &state,
                                   MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)120,
                                   MHD_OPTION_END);

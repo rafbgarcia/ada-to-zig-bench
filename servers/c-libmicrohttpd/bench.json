@@ -5,7 +5,7 @@
   "suite": "http-json",
   "toolchains": ["c"],
   "implementation": "libmicrohttpd + jansson",
-  "concurrency": "thread-per-connection",
+  "concurrency": "thread-pool",
   "install": "cc -O3 -std=c11 -Wall -Wextra -o server src/server.c $(pkg-config --cflags --libs libmicrohttpd jansson)",
   "run": "./server"
 }
