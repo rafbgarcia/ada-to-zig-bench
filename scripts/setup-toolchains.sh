@@ -178,7 +178,7 @@ for toolchain in "${TOOLCHAINS[@]}"; do
     java) install_java ;;
     node) install_node ;;
     python) install_apt_once python3 python3-pip python3-venv ;;
-    ruby) install_apt_once ruby ruby-webrick ;;
+    ruby) install_apt_once ruby ruby-dev bundler build-essential ruby-webrick ;;
     rust) install_rust ;;
     zig) install_zig ;;
     *) printf '[toolchains] error: unknown toolchain: %s\n' "$toolchain" >&2; exit 1 ;;

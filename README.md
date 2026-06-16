@@ -25,6 +25,7 @@ The current implementations are:
 - `servers/go-nethttp`: Go stdlib `net/http` server
 - `servers/java-httpserver`: Java JDK `HttpServer` using Gson
 - `servers/python-aiohttp`: Python `aiohttp.web` server
+- `servers/ruby-rails-puma`: Ruby Rails API server on Puma
 - `servers/ruby-webrick`: Ruby WEBrick server
 - `servers/rust-hyper-tokio-st`: Rust Hyper HTTP/1.1 server on a single-thread Tokio runtime
 - `servers/rust-hyper-tokio-mt`: Rust Hyper HTTP/1.1 server on a multi-thread Tokio runtime

@@ -1,0 +1,11 @@
+{
+  "id": "ruby-rails-puma",
+  "language": "Ruby",
+  "runtime": "Ruby + Rails API + Puma",
+  "suite": "http-json",
+  "toolchains": ["ruby"],
+  "implementation": "Rails API on Puma",
+  "concurrency": "thread-pool",
+  "install": "BUNDLE_PATH=vendor/bundle ruby -S bundle install --jobs 4 --retry 3",
+  "run": "BUNDLE_PATH=vendor/bundle ruby -S bundle exec puma -C config/puma.rb config.ru"
+}

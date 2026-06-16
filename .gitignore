@@ -5,6 +5,7 @@ obj/
 .venv/
 _build/
 deps/
+servers/*/vendor/bundle/
 .zig-cache/
 zig-out/
 out/
