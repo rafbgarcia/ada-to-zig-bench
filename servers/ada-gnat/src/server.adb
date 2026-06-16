@@ -6,6 +6,7 @@ with Ada.IO_Exceptions;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
+with Ada.Streams;
 with Ada.Text_IO;
 with GNAT.Sockets;
 with GNATCOLL.JSON;
@@ -17,9 +18,11 @@ procedure Server is
    use GNAT.Sockets;
    use GNATCOLL.JSON;
    use type Ada.Calendar.Time;
+   use type Ada.Streams.Stream_Element_Offset;
 
    Max_Safe_Integer : constant Long_Long_Integer := 9_007_199_254_740_991;
    Started_At       : constant Ada.Calendar.Time := Ada.Calendar.Clock;
+   Socket_Buffer_Size : constant Natural := 16 * 1024;
 
    type U32 is mod 2 ** 32;
    type Port_Array is array (Positive range <>) of Port_Type;
@@ -238,33 +241,108 @@ procedure Server is
         ",""request_errors_total"":" & Image (Metrics.Request_Errors) & "}";
    end Activity_JSON;
 
-   function Read_Line (Channel : Stream_Access) return String is
-      Buffer : Unbounded_String;
-      Ch : Character;
+   procedure Fill_Pending (Socket : in out Socket_Type; Pending : in out Unbounded_String) is
+      Buffer : Ada.Streams.Stream_Element_Array (1 .. Ada.Streams.Stream_Element_Offset (Socket_Buffer_Size));
+      Last : Ada.Streams.Stream_Element_Offset;
+   begin
+      Receive_Socket (Socket, Buffer, Last);
+      if Last < Buffer'First then
+         raise Ada.IO_Exceptions.End_Error;
+      end if;
+
+      declare
+         Count : constant Natural := Natural (Last - Buffer'First + 1);
+         Chunk : String (1 .. Count);
+      begin
+         for I in Chunk'Range loop
+            declare
+               Source : constant Ada.Streams.Stream_Element_Offset :=
+                 Buffer'First + Ada.Streams.Stream_Element_Offset (I - Chunk'First);
+            begin
+               Chunk (I) := Character'Val (Integer (Buffer (Source)));
+            end;
+         end loop;
+         Append (Pending, Chunk);
+      end;
+   end Fill_Pending;
+
+   function Read_Line (Socket : in out Socket_Type; Pending : in out Unbounded_String) return String is
    begin
       loop
-         Character'Read (Channel, Ch);
-         if Ch = ASCII.LF then
-            return To_String (Buffer);
-         elsif Ch /= ASCII.CR then
-            Append (Buffer, Ch);
-         end if;
+         declare
+            Buffered : constant String := To_String (Pending);
+            LF : constant Natural := Index (Buffered, String'(1 => ASCII.LF));
+         begin
+            if LF > 0 then
+               declare
+                  Last_Line_Char : Natural := LF - 1;
+               begin
+                  if Last_Line_Char >= Buffered'First and then Buffered (Last_Line_Char) = ASCII.CR then
+                     Last_Line_Char := Last_Line_Char - 1;
+                  end if;
+
+                  if LF < Buffered'Last then
+                     Pending := To_Unbounded_String (Buffered (LF + 1 .. Buffered'Last));
+                  else
+                     Pending := Null_Unbounded_String;
+                  end if;
+
+                  if Last_Line_Char >= Buffered'First then
+                     return Buffered (Buffered'First .. Last_Line_Char);
+                  else
+                     return "";
+                  end if;
+               end;
+            end if;
+         end;
+
+         Fill_Pending (Socket, Pending);
       end loop;
    end Read_Line;
 
-   function Read_Exact (Channel : Stream_Access; Length : Natural) return String is
-      Result : String (1 .. Length);
+   function Read_Exact (Socket : in out Socket_Type; Pending : in out Unbounded_String; Count : Natural) return String is
    begin
-      for I in Result'Range loop
-         Character'Read (Channel, Result (I));
+      if Count = 0 then
+         return "";
+      end if;
+
+      while Length (Pending) < Count loop
+         Fill_Pending (Socket, Pending);
       end loop;
-      return Result;
+
+      declare
+         Buffered : constant String := To_String (Pending);
+         Result : constant String := Buffered (Buffered'First .. Buffered'First + Count - 1);
+      begin
+         if Count < Buffered'Length then
+            Pending := To_Unbounded_String (Buffered (Buffered'First + Count .. Buffered'Last));
+         else
+            Pending := Null_Unbounded_String;
+         end if;
+         return Result;
+      end;
    end Read_Exact;
 
-   procedure Write_String (Channel : Stream_Access; Value : String) is
+   procedure Write_String (Socket : in out Socket_Type; Value : String) is
+      Offset : Natural := Value'First;
    begin
-      for Ch of Value loop
-         Character'Write (Channel, Ch);
+      while Offset <= Value'Last loop
+         declare
+            Count : constant Natural := Natural'Min (Socket_Buffer_Size, Value'Last - Offset + 1);
+            Buffer : Ada.Streams.Stream_Element_Array (1 .. Ada.Streams.Stream_Element_Offset (Count));
+            Last : Ada.Streams.Stream_Element_Offset;
+         begin
+            for I in 0 .. Count - 1 loop
+               Buffer (Buffer'First + Ada.Streams.Stream_Element_Offset (I)) :=
+                 Ada.Streams.Stream_Element (Character'Pos (Value (Offset + I)));
+            end loop;
+
+            Send_Socket (Socket, Buffer, Last);
+            if Last < Buffer'First then
+               raise Ada.IO_Exceptions.End_Error;
+            end if;
+            Offset := Offset + Natural (Last - Buffer'First + 1);
+         end;
       end loop;
    end Write_String;
 
@@ -350,11 +428,11 @@ procedure Server is
    end Handle_JSON;
 
    procedure Handle_Connection (Socket : in out Socket_Type) is
-      Channel : constant Stream_Access := Stream (Socket);
+      Pending : Unbounded_String := Null_Unbounded_String;
    begin
       loop
          declare
-            Request_Line : constant String := Read_Line (Channel);
+            Request_Line : constant String := Read_Line (Socket, Pending);
             Method : Unbounded_String;
             Target : Unbounded_String;
             Valid : Boolean;
@@ -366,7 +444,7 @@ procedure Server is
 
             loop
                declare
-                  Header : constant String := Read_Line (Channel);
+                  Header : constant String := Read_Line (Socket, Pending);
                   Lower : constant String := Ada.Characters.Handling.To_Lower (Header);
                   Colon : constant Natural := Index (Header, ":");
                begin
@@ -386,7 +464,7 @@ procedure Server is
             end loop;
 
             declare
-               Request_Body : constant String := Read_Exact (Channel, Content_Length);
+               Request_Body : constant String := Read_Exact (Socket, Pending, Content_Length);
                Path : constant String := (if Valid then Path_Only (To_String (Target)) else "");
                Reply : Unbounded_String;
             begin
@@ -408,7 +486,7 @@ procedure Server is
                   Reply := To_Unbounded_String (Response (404, "{""error"":""not_found""}"));
                end if;
 
-               Write_String (Channel, To_String (Reply));
+               Write_String (Socket, To_String (Reply));
                exit when not Keep_Alive;
             end;
          end;
