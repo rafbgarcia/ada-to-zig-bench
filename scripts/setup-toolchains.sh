@@ -7,6 +7,8 @@ GO_VERSION="${GO_VERSION:-1.24.0}"
 NODE_MAJOR="${NODE_MAJOR:-24}"
 JAVA_MAJOR="${JAVA_MAJOR:-21}"
 DOTNET_INSTALL_DIR="${DOTNET_INSTALL_DIR:-/opt/dotnet}"
+ELIXIR_VERSION="${ELIXIR_VERSION:-1.15.8}"
+ELIXIR_INSTALL_DIR="${ELIXIR_INSTALL_DIR:-/opt/elixir}"
 
 usage() {
   cat <<'EOF'
@@ -113,9 +115,54 @@ install_erlang() {
   install_apt_once erlang-dev erlang-src erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools erlang-xmerl rebar3
 }
 
+installed_elixir_version() {
+  if ! command -v elixir >/dev/null 2>&1; then return 1; fi
+  elixir --version | awk '/^Elixir / { print $2; exit }'
+}
+
+version_at_least() {
+  local current="$1"
+  local required="$2"
+  local current_parts required_parts index current_part required_part
+  IFS=. read -r -a current_parts <<<"${current%%[-+]*}"
+  IFS=. read -r -a required_parts <<<"${required%%[-+]*}"
+
+  for index in 0 1 2; do
+    current_part="${current_parts[$index]:-0}"
+    required_part="${required_parts[$index]:-0}"
+    [[ "$current_part" =~ ^[0-9]+$ ]] || current_part=0
+    [[ "$required_part" =~ ^[0-9]+$ ]] || required_part=0
+    if (( current_part > required_part )); then return 0; fi
+    if (( current_part < required_part )); then return 1; fi
+  done
+
+  return 0
+}
+
 install_elixir() {
   install_erlang
-  install_apt_once elixir
+
+  local current_version
+  current_version="$(installed_elixir_version || true)"
+  if [[ -n "$current_version" ]] && version_at_least "$current_version" "$ELIXIR_VERSION"; then
+    return
+  fi
+
+  local otp_major elixir_zip
+  otp_major="$(erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().' )"
+  elixir_zip="/tmp/elixir-${ELIXIR_VERSION}-otp-${otp_major}.zip"
+
+  if ! curl -fsSL "https://github.com/elixir-lang/elixir/releases/download/v${ELIXIR_VERSION}/elixir-otp-${otp_major}.zip" -o "$elixir_zip"; then
+    printf '[toolchains] error: failed to download Elixir %s for Erlang/OTP %s\n' "$ELIXIR_VERSION" "$otp_major" >&2
+    exit 1
+  fi
+  rm -rf "$ELIXIR_INSTALL_DIR"
+  install -d -m 755 "$ELIXIR_INSTALL_DIR"
+  unzip -q "$elixir_zip" -d "$ELIXIR_INSTALL_DIR"
+  ln -sf "$ELIXIR_INSTALL_DIR/bin/elixir" /usr/local/bin/elixir
+  ln -sf "$ELIXIR_INSTALL_DIR/bin/elixirc" /usr/local/bin/elixirc
+  ln -sf "$ELIXIR_INSTALL_DIR/bin/iex" /usr/local/bin/iex
+  ln -sf "$ELIXIR_INSTALL_DIR/bin/mix" /usr/local/bin/mix
 }
 
 for toolchain in "${TOOLCHAINS[@]}"; do
@@ -138,7 +185,7 @@ for toolchain in "${TOOLCHAINS[@]}"; do
   esac
 done
 
-export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:${DOTNET_INSTALL_DIR}:$PATH"
+export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:${DOTNET_INSTALL_DIR}:${ELIXIR_INSTALL_DIR}/bin:$PATH"
 
 for toolchain in "${TOOLCHAINS[@]}"; do
   case "$toolchain" in
