@@ -1012,6 +1012,9 @@ remote_server_start() {
 set -euo pipefail
 ulimit -n "$BENCH_NOFILE"
 export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:/opt/dotnet:$PATH"
+if [[ -d /opt/elixir/bin ]]; then
+  export PATH="/opt/elixir/bin:$PATH"
+fi
 export BUN_INSTALL="/opt/bun"
 export DOTNET_ROOT="/opt/dotnet"
 cd /opt/bench
@@ -1065,7 +1068,7 @@ REMOTE
 wait_for_loadgen_server_health() {
   local server="$1"
   log "checking loadgen host can reach $server health endpoints"
-  ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
+  if ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
     PORTS="$REMOTE_PORTS" \
     'bash -s' <<'REMOTE'
@@ -1098,6 +1101,28 @@ for port in "${ports[@]}"; do
 done
 exit 1
 REMOTE
+  then
+    return 0
+  fi
+
+  log "server host listen state after failed loadgen health check"
+  ssh "${SSH_OPTS[@]}" "$SSH_USER@$SERVER_IPV4" \
+    SERVER_PUBLIC_IP="$SERVER_IPV4" \
+    PORTS="$REMOTE_PORTS" \
+    'bash -s' <<'REMOTE' || true
+set -euo pipefail
+echo "server public ip: $SERVER_PUBLIC_IP" >&2
+if command -v ss >/dev/null 2>&1; then
+  ss -ltnp '( sport >= :8080 and sport <= :8111 )' >&2 || true
+fi
+if [[ -d /opt/bench/.tmp/cloud-server ]]; then
+  ls -la /opt/bench/.tmp/cloud-server >&2 || true
+fi
+if [[ -s /opt/bench/.tmp/cloud-server/server.log ]]; then
+  tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+fi
+REMOTE
+  return 1
 }
 
 remote_server_stop() {
