@@ -816,9 +816,10 @@ cd /opt/bench
 bash scripts/setup-toolchains.sh
 export PATH="/root/.cargo/bin:/usr/local/go/bin:/opt/bun/bin:/opt/dotnet:$PATH"
 export BUN_INSTALL="/opt/bun"
-mkdir -p /opt/bench/.tmp
+mkdir -p /opt/bench/bin /opt/bench/.tmp
 node scripts/prepare-server-dependencies.mjs
-go build -o /opt/bench/.tmp/collector ./collector/cmd/collector
+go build -o /opt/bench/bin/collector ./collector/cmd/collector
+test -x /opt/bench/bin/collector
 chown -R "$BENCH_USER" /opt/bench
 REMOTE
 }
@@ -843,8 +844,9 @@ rm -rf /usr/local/go
 tar -C /usr/local -xzf /tmp/go.tar.gz
 export PATH="/usr/local/go/bin:$PATH"
 cd /opt/bench
-mkdir -p /opt/bench/.tmp
-go build -o /opt/bench/.tmp/loadgen-bin ./loadgen/cmd/loadgen
+mkdir -p /opt/bench/bin /opt/bench/.tmp
+go build -o /opt/bench/bin/loadgen-bin ./loadgen/cmd/loadgen
+test -x /opt/bench/bin/loadgen-bin
 chown -R "$BENCH_USER" /opt/bench
 REMOTE
 }
@@ -855,6 +857,10 @@ reboot_between_suites() {
     return
   fi
 
+  local server_boot_id loadgen_boot_id
+  server_boot_id="$(remote_boot_id "$SERVER_IPV4" "server")"
+  loadgen_boot_id="$(remote_boot_id "$LOADGEN_IPV4" "loadgen")"
+
   log "rebooting Latitude hosts before the next server suite"
   request_reboot "$SERVER_IPV4" "server"
   request_reboot "$LOADGEN_IPV4" "loadgen"
@@ -862,8 +868,42 @@ reboot_between_suites() {
   wait_for_ssh_down "$LOADGEN_IPV4" "loadgen"
   wait_for_ssh "$SERVER_IPV4" "server"
   wait_for_ssh "$LOADGEN_IPV4" "loadgen"
+  wait_for_boot_id_change "$SERVER_IPV4" "server" "$server_boot_id"
+  wait_for_boot_id_change "$LOADGEN_IPV4" "loadgen" "$loadgen_boot_id"
   tune_remote_host "$SERVER_IPV4" "server"
   tune_remote_host "$LOADGEN_IPV4" "loadgen"
+}
+
+remote_boot_id() {
+  local ip="$1"
+  local role="$2"
+  local boot_id
+
+  boot_id="$(ssh "${SSH_OPTS[@]}" "$SSH_USER@$ip" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+  if [[ -z "$boot_id" ]]; then
+    printf '[latitude-bench] could not read current boot ID from %s host %s\n' "$role" "$ip" >&2
+  fi
+  printf '%s\n' "$boot_id"
+}
+
+wait_for_boot_id_change() {
+  local ip="$1"
+  local role="$2"
+  local previous_boot_id="$3"
+  local current_boot_id
+
+  [[ -n "$previous_boot_id" ]] || return
+
+  for _ in {1..60}; do
+    current_boot_id="$(remote_boot_id "$ip" "$role")"
+    if [[ -n "$current_boot_id" && "$current_boot_id" != "$previous_boot_id" ]]; then
+      log "$role host $ip rebooted; boot ID changed"
+      return
+    fi
+    sleep 1
+  done
+
+  fail "$role host $ip did not report a new boot ID after reboot"
 }
 
 request_reboot() {
@@ -935,6 +975,7 @@ run_server_suite() {
   fetch_server_artifacts "$local_work_dir"
   remote_server_stop
   fetch_server_artifacts "$local_work_dir"
+  require_server_metrics_artifact "$server" "$local_work_dir" || artifact_status=1
   if [[ -f "$local_work_dir/summary.json" ]]; then
     write_suite_metadata "$server" "$started_at" "$local_work_dir"
   else
@@ -947,7 +988,7 @@ run_server_suite() {
   log "wrote servers/$server/benchmark"
   if (( artifact_status != 0 )); then
     print_suite_failure_details "$server" "servers/$server/benchmark"
-    fail "suite completed for $server but loadgen artifacts were incomplete; artifacts were preserved"
+    fail "suite completed for $server but benchmark artifacts were incomplete; artifacts were preserved"
   fi
   if (( status == 2 )); then
     print_suite_failure_details "$server" "servers/$server/benchmark"
@@ -1018,18 +1059,134 @@ fi
 export BUN_INSTALL="/opt/bun"
 export DOTNET_ROOT="/opt/dotnet"
 cd /opt/bench
+test -x /opt/bench/bin/collector
 manifest="servers/$SERVER_NAME/bench.json"
 test -f "$manifest"
 run_command="$(node scripts/manifest-field.mjs "$manifest" run)"
 install_command="$(node scripts/manifest-field.mjs "$manifest" install)"
 test -n "$run_command"
+cleanup_benchmark_processes() {
+  local pid cwd
+
+  if [[ -f /opt/bench/.tmp/cloud-server/collector.pid ]]; then
+    pid="$(cat /opt/bench/.tmp/cloud-server/collector.pid 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  if [[ -f /opt/bench/.tmp/cloud-server/server.pid ]]; then
+    pid="$(cat /opt/bench/.tmp/cloud-server/server.pid 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill -- "-$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  for proc in /proc/[0-9]*; do
+    pid="${proc##*/}"
+    cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
+    case "$cwd" in
+      /opt/bench/servers/*)
+        kill "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+
+  sleep 1
+
+  if [[ -f /opt/bench/.tmp/cloud-server/server.pid ]]; then
+    pid="$(cat /opt/bench/.tmp/cloud-server/server.pid 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill -9 -- "-$pid" 2>/dev/null || true
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  for proc in /proc/[0-9]*; do
+    pid="${proc##*/}"
+    cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
+    case "$cwd" in
+      /opt/bench/servers/*)
+        kill -9 "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+}
+
+wait_for_no_benchmark_listeners() {
+  local deadline port failed pids
+  IFS=',' read -r -a ports <<<"$PORTS"
+  deadline=$((SECONDS + 30))
+
+  while (( SECONDS < deadline )); do
+    failed=0
+    for port in "${ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      [[ -n "$port" ]] || continue
+      pids="$(ss -H -ltnp "sport = :$port" 2>/dev/null | sed -nE 's/.*pid=([0-9]+).*/\1/p' | sort -u | paste -sd, -)"
+      if [[ -n "$pids" ]]; then
+        failed=1
+        break
+      fi
+    done
+    (( failed == 0 )) && return
+    sleep 0.5
+  done
+
+  echo "benchmark listener ports did not clear before starting $SERVER_NAME" >&2
+  ss -ltnp '( sport >= :8080 and sport <= :8111 )' >&2 || true
+  exit 1
+}
+
+wait_for_server_runtime() {
+  local deadline port runtime failed
+  IFS=',' read -r -a ports <<<"$PORTS"
+  deadline=$((SECONDS + 60))
+
+  while (( SECONDS < deadline )); do
+    failed=0
+    for port in "${ports[@]}"; do
+      port="${port//[[:space:]]/}"
+      [[ -n "$port" ]] || continue
+      if ! runtime="$(curl -fsS "http://127.0.0.1:$port/runtime" 2>/dev/null | jq -r '.runtime // empty')"; then
+        failed=1
+        break
+      fi
+      if [[ "$runtime" != "$SERVER_NAME" ]]; then
+        failed=1
+        break
+      fi
+    done
+    if (( failed == 0 )); then
+      return
+    fi
+    if ! kill -0 "$(cat /opt/bench/.tmp/cloud-server/server.pid)" 2>/dev/null; then
+      echo "server process exited before runtime checks passed" >&2
+      tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+      exit 1
+    fi
+    sleep 0.2
+  done
+
+  echo "server runtime check failed for $SERVER_NAME" >&2
+  ps -fp "$(cat /opt/bench/.tmp/cloud-server/server.pid)" >&2 || true
+  ss -ltnp '( sport >= :8080 and sport <= :8111 )' >&2 || true
+  tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+  exit 1
+}
+
+cleanup_benchmark_processes
+wait_for_no_benchmark_listeners
 if [[ -n "$install_command" ]]; then
   printf '[latitude-bench] installing %s dependencies: %s\n' "$SERVER_NAME" "$install_command"
   (cd "servers/$SERVER_NAME" && bash -c "$install_command")
 fi
+cleanup_benchmark_processes
+wait_for_no_benchmark_listeners
 rm -rf /opt/bench/.tmp/cloud-server
 mkdir -p /opt/bench/.tmp/cloud-server
-SERVER_NAME="$SERVER_NAME" HOST="$HOST" PORTS="$PORTS" RUN_COMMAND="$run_command" nohup bash -c '
+SERVER_NAME="$SERVER_NAME" HOST="$HOST" PORTS="$PORTS" RUN_COMMAND="$run_command" setsid bash -c '
   set -euo pipefail
   cd "/opt/bench/servers/$SERVER_NAME"
   export HOST PORTS
@@ -1039,27 +1196,25 @@ SERVER_NAME="$SERVER_NAME" HOST="$HOST" PORTS="$PORTS" RUN_COMMAND="$run_command
   exec bash -c "$RUN_COMMAND"
 ' > /opt/bench/.tmp/cloud-server/server.log 2>&1 < /dev/null &
 echo "$!" > /opt/bench/.tmp/cloud-server/server.pid
-first_port="${PORTS%%,*}"
-for _ in {1..300}; do
-  if curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null 2>&1; then
+wait_for_server_runtime
+nohup /opt/bench/bin/collector --pid "$(cat /opt/bench/.tmp/cloud-server/server.pid)" --output /opt/bench/.tmp/cloud-server/server_metrics.jsonl --interval 1s > /opt/bench/.tmp/cloud-server/collector.log 2>&1 < /dev/null &
+echo "$!" > /opt/bench/.tmp/cloud-server/collector.pid
+for _ in {1..50}; do
+  if [[ -s /opt/bench/.tmp/cloud-server/server_metrics.jsonl ]]; then
     break
   fi
-  if ! kill -0 "$(cat /opt/bench/.tmp/cloud-server/server.pid)" 2>/dev/null; then
-    echo "server process exited before health check passed" >&2
-    tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+  if ! kill -0 "$(cat /opt/bench/.tmp/cloud-server/collector.pid)" 2>/dev/null; then
+    echo "collector process exited before writing server metrics" >&2
+    tail -n 100 /opt/bench/.tmp/cloud-server/collector.log >&2 || true
     exit 1
   fi
-  sleep 0.2
+  sleep 0.1
 done
-if ! curl -fsS "http://127.0.0.1:$first_port/health" >/dev/null; then
-  echo "server health check failed for $SERVER_NAME on port $first_port" >&2
-  ps -fp "$(cat /opt/bench/.tmp/cloud-server/server.pid)" >&2 || true
-  ss -ltnp '( sport >= :8080 and sport <= :8111 )' >&2 || true
-  tail -n 100 /opt/bench/.tmp/cloud-server/server.log >&2 || true
+if [[ ! -s /opt/bench/.tmp/cloud-server/server_metrics.jsonl ]]; then
+  echo "collector did not write server metrics" >&2
+  tail -n 100 /opt/bench/.tmp/cloud-server/collector.log >&2 || true
   exit 1
 fi
-nohup /opt/bench/.tmp/collector --pid "$(cat /opt/bench/.tmp/cloud-server/server.pid)" --output /opt/bench/.tmp/cloud-server/server_metrics.jsonl --interval 1s > /opt/bench/.tmp/cloud-server/collector.log 2>&1 < /dev/null &
-echo "$!" > /opt/bench/.tmp/cloud-server/collector.pid
 REMOTE
   printf '{"provider":"latitude.sh","server_public_ip":"%s","loadgen_public_ip":"%s","site":"%s","server_plan":"%s","loadgen_plan":"%s"}\n' \
     "$SERVER_IPV4" "$LOADGEN_IPV4" "$LATITUDE_SITE" "$LATITUDE_SERVER_PLAN" "$LATITUDE_LOADGEN_PLAN" > "$local_work_dir/infrastructure.json"
@@ -1070,6 +1225,7 @@ wait_for_loadgen_server_health() {
   log "checking loadgen host can reach $server health endpoints"
   if ssh "${SSH_OPTS[@]}" "$SSH_USER@$LOADGEN_IPV4" \
     SERVER_PUBLIC_IP="$SERVER_IPV4" \
+    SERVER_NAME="$server" \
     PORTS="$REMOTE_PORTS" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
@@ -1081,7 +1237,11 @@ while (( SECONDS < deadline )); do
   for port in "${ports[@]}"; do
     port="${port//[[:space:]]/}"
     [[ -n "$port" ]] || continue
-    if ! curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/health" >/dev/null 2>&1; then
+    if ! runtime="$(curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/runtime" 2>/dev/null | jq -r '.runtime // empty')"; then
+      failed=1
+      break
+    fi
+    if [[ "$runtime" != "$SERVER_NAME" ]]; then
       failed=1
       break
     fi
@@ -1095,8 +1255,10 @@ done
 for port in "${ports[@]}"; do
   port="${port//[[:space:]]/}"
   [[ -n "$port" ]] || continue
-  if ! curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/health" >/dev/null; then
-    printf 'loadgen host cannot reach http://%s:%s/health\n' "$SERVER_PUBLIC_IP" "$port" >&2
+  if ! runtime="$(curl -fsS --connect-timeout 2 --max-time 5 "http://$SERVER_PUBLIC_IP:$port/runtime" 2>/dev/null | jq -r '.runtime // empty')"; then
+    printf 'loadgen host cannot reach http://%s:%s/runtime\n' "$SERVER_PUBLIC_IP" "$port" >&2
+  elif [[ "$runtime" != "$SERVER_NAME" ]]; then
+    printf 'loadgen host reached http://%s:%s/runtime but got runtime %s, expected %s\n' "$SERVER_PUBLIC_IP" "$port" "$runtime" "$SERVER_NAME" >&2
   fi
 done
 exit 1
@@ -1140,15 +1302,26 @@ if [[ -f /opt/bench/.tmp/cloud-server/collector.pid ]]; then
 fi
 if [[ -f /opt/bench/.tmp/cloud-server/server.pid ]]; then
   server_pid="$(cat /opt/bench/.tmp/cloud-server/server.pid)"
+  kill -- "-$server_pid" 2>/dev/null || true
   pkill -TERM -P "$server_pid" 2>/dev/null || true
   kill "$server_pid" 2>/dev/null || true
   for _ in {1..100}; do
     kill -0 "$server_pid" 2>/dev/null || break
     sleep 0.1
   done
+  kill -9 -- "-$server_pid" 2>/dev/null || true
   pkill -KILL -P "$server_pid" 2>/dev/null || true
   kill -9 "$server_pid" 2>/dev/null || true
 fi
+for proc in /proc/[0-9]*; do
+  pid="${proc##*/}"
+  cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
+  case "$cwd" in
+    /opt/bench/servers/*)
+      kill "$pid" 2>/dev/null || true
+      ;;
+  esac
+done
 REMOTE
 }
 
@@ -1157,6 +1330,18 @@ fetch_server_artifacts() {
   for file in server_metrics.jsonl activity_metrics.jsonl server_events.jsonl runtime_metrics.jsonl server.log collector.log; do
     scp "${SSH_OPTS[@]}" "$SSH_USER@$SERVER_IPV4:/opt/bench/.tmp/cloud-server/$file" "$local_work_dir/$file" >/dev/null || true
   done
+}
+
+require_server_metrics_artifact() {
+  local server="$1"
+  local local_work_dir="$2"
+
+  if [[ -s "$local_work_dir/server_metrics.jsonl" ]]; then
+    return
+  fi
+
+  log "server_metrics.jsonl is missing for $server; preserving available artifacts without metadata enrichment"
+  return 1
 }
 
 run_loadgen() {
@@ -1184,7 +1369,7 @@ cd /opt/bench
 OUT="/opt/bench/.tmp/loadgen"
 rm -rf "$OUT"
 mkdir -p "$OUT"
-test -x /opt/bench/.tmp/loadgen-bin
+test -x /opt/bench/bin/loadgen-bin
 URLS=""
 IFS=',' read -r -a ports <<<"$PORTS"
 for port in "${ports[@]}"; do
@@ -1193,7 +1378,7 @@ for port in "${ports[@]}"; do
   if [[ -n "$URLS" ]]; then URLS+=","; fi
   URLS+="http://$SERVER_PUBLIC_IP:$port/json"
 done
-/opt/bench/.tmp/loadgen-bin \
+/opt/bench/bin/loadgen-bin \
   --urls "$URLS" \
   --client-connections "$CLIENT_CONNECTIONS" \
   --payload-bytes "$PAYLOAD_BYTES" \
